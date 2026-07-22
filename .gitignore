@@ -1,0 +1,27 @@
+# Dependencies and generated output
+**/node_modules/
+**/.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Generated Prisma artifacts (schema, seed, and migrations stay versioned)
+**/.prisma/
+prisma/generated/
+generated/prisma/
+prisma/*.db
+prisma/*.db-journal
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Runtime and editor files
+.runtime-logs/
+/github-mcp-server/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgis/postgis:15-3.4
+    container_name: nexio-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nexio_commerce
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexio-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: always
+
+volumes:
+  pgdata:
+    driver: local
+
+  redisdata:
+    driver: local

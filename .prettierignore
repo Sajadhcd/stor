@@ -1,0 +1,8 @@
+**/node_modules
+**/.next
+**/dist
+coverage
+.runtime-logs
+package-lock.json
+prisma/migrations
+*.tsbuildinfo
