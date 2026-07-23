@@ -10,6 +10,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const loadProducts = async () => {
@@ -30,29 +31,41 @@ export default function ProductsPage() {
     loadProducts();
   }, []);
 
-  const handleCreateProduct = async (data: ProductFormData) => {
+  const handleSaveProduct = async (data: ProductFormData) => {
     setSubmitting(true);
     try {
-      await apiFetch('/products', {
-        method: 'POST',
-        body: JSON.stringify({
-          titleTranslations: {
-            ar: data.titleAr,
-            en: data.titleEn,
-          },
-          brandId: data.brandId || undefined,
-          slug: data.slug || undefined,
-          metaTitle: data.metaTitle || undefined,
-          metaDescription: data.metaDescription || undefined,
-          imageUrls: data.images.map((img) => img.url),
-          isPublished: data.isPublished,
-        }),
-      });
+      const payload = {
+        titleTranslations: {
+          ar: data.titleAr,
+          en: data.titleEn,
+        },
+        brandId: data.brandId || undefined,
+        slug: data.slug || undefined,
+        metaTitle: data.metaTitle || undefined,
+        metaDescription: data.metaDescription || undefined,
+        imageUrls: data.images.map((img) => img.url),
+        isPublished: data.isPublished,
+      };
+
+      if (selectedProduct) {
+        // Update product details
+        await apiFetch(`/products/${selectedProduct.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+      } else {
+        // Create product
+        await apiFetch('/products', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      }
 
       setShowModal(false);
+      setSelectedProduct(null);
       await loadProducts();
     } catch (err: any) {
-      alert(err.message || 'حدث خطأ أثناء إضافة المنتج');
+      alert(err.message || 'حدث خطأ أثناء حفظ المنتج');
     } finally {
       setSubmitting(false);
     }
@@ -68,7 +81,10 @@ export default function ProductsPage() {
             <p className="text-sm text-slate-500 mt-1">عرض وتخصيص كافة المنتجات والصور والعلامات التجارية لمتجرك.</p>
           </div>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => {
+              setSelectedProduct(null);
+              setShowModal(true);
+            }}
             className="flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -161,7 +177,13 @@ export default function ProductsPage() {
                         </td>
                         <td className="py-4 pl-6">
                           <div className="flex items-center justify-center gap-2">
-                            <button className="p-2 hover:bg-indigo-50 text-indigo-600 rounded-lg transition-colors">
+                            <button
+                              onClick={() => {
+                                setSelectedProduct(product);
+                                setShowModal(true);
+                              }}
+                              className="p-2 hover:bg-indigo-50 text-indigo-600 rounded-lg transition-colors cursor-pointer"
+                            >
                               <Eye className="w-4 h-4" />
                             </button>
                           </div>
@@ -179,8 +201,12 @@ export default function ProductsPage() {
       {/* Modular Product Form Modal */}
       <ProductForm
         isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        onSubmit={handleCreateProduct}
+        product={selectedProduct}
+        onClose={() => {
+          setShowModal(false);
+          setSelectedProduct(null);
+        }}
+        onSubmit={handleSaveProduct}
         submitting={submitting}
       />
     </DashboardLayout>

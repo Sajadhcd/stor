@@ -436,6 +436,50 @@ export class ProductsService {
     return result;
   }
 
+  async updateProductImage(
+    productId: string,
+    imageId: string,
+    data: {
+      variantId?: string | null;
+      isPrimary?: boolean;
+      sortOrder?: number;
+      altText?: string;
+    },
+    tenantIdOverride?: string
+  ) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    await this.findById(productId);
+
+    const result = await this.db.exec(async (tx) => {
+      const image = await tx.productImage.findFirst({
+        where: { id: imageId, productId, tenantId },
+      });
+      if (!image) {
+        throw new NotFoundException(`Image ${imageId} not found under product ${productId}`);
+      }
+
+      if (data.isPrimary) {
+        await tx.productImage.updateMany({
+          where: { productId, tenantId },
+          data: { isPrimary: false },
+        });
+      }
+
+      return tx.productImage.update({
+        where: { id: imageId },
+        data: {
+          variantId: data.variantId === null ? null : data.variantId,
+          isPrimary: data.isPrimary,
+          sortOrder: data.sortOrder,
+          altText: data.altText,
+        },
+      });
+    });
+
+    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    return result;
+  }
+
   async softDelete(id: string) {
     const product = await this.findById(id);
     const result = await this.db.exec(async (tx) => {
@@ -461,6 +505,7 @@ export class ProductsService {
       price: number;
       costPrice?: number;
       weight?: number;
+      attributes?: Record<string, any>;
       tenantId: string;
     }
   ) {
@@ -493,6 +538,7 @@ export class ProductsService {
           price: data.price,
           costPrice: data.costPrice,
           weight: data.weight,
+          attributes: data.attributes ? (data.attributes as any) : undefined,
         },
       });
     });
@@ -510,6 +556,7 @@ export class ProductsService {
       price?: number;
       costPrice?: number;
       weight?: number;
+      attributes?: Record<string, any>;
       tenantId: string;
     }
   ) {
@@ -549,6 +596,7 @@ export class ProductsService {
           price: data.price,
           costPrice: data.costPrice,
           weight: data.weight,
+          attributes: data.attributes !== undefined ? (data.attributes as any) : undefined,
         },
       });
     });
@@ -588,6 +636,7 @@ export class ProductsService {
   ) {
     const product = await this.findById(productId);
 
+    const optionKeys = Object.keys(data.options);
     const optionValues = Object.values(data.options);
     if (optionValues.length === 0) {
       throw new BadRequestException('No options provided for variant matrix generation');
@@ -616,12 +665,18 @@ export class ProductsService {
           continue;
         }
 
+        const attributes: Record<string, string> = {};
+        optionKeys.forEach((key, index) => {
+          attributes[key] = combo[index];
+        });
+
         const variant = await tx.productVariant.create({
           data: {
             tenantId: data.tenantId,
             productId,
             sku: variantSku,
             price: data.basePrice,
+            attributes,
           },
         });
         createdVariants.push(variant);

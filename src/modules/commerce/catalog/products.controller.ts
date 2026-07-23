@@ -109,6 +109,22 @@ export class ProductsController {
     return this.productsService.deleteProductImage(productId, imageId, tenantId);
   }
 
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @ApiOperation({ summary: 'Update product image properties' })
+  @ApiResponse({ status: 200, description: 'Image updated successfully' })
+  @RequirePermissions('products:update')
+  @Patch(':id/images/:imageId')
+  async updateProductImage(
+    @Param('id') productId: string,
+    @Param('imageId') imageId: string,
+    @Body() dto: { variantId?: string | null; isPrimary?: boolean; sortOrder?: number; altText?: string },
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const tenantId = req.user.tenantId;
+    return this.productsService.updateProductImage(productId, imageId, dto, tenantId);
+  }
+
   // Variant management endpoints
 
   @ApiBearerAuth()
