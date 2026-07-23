@@ -4,16 +4,16 @@ import { ConfigService } from '../config/config.service.js';
 import { requestContextStorage } from '../../common/context/request-context.js';
 
 /**
- * Tenant-scoped Prisma service that owns its own non-superuser (db_user)
+ * Tenant-scoped Prisma service that owns its own non-superuser (nexio_app)
  * connection pool completely separate from PrismaService.
  *
  * Architecture rationale:
- *   - PrismaService (postgres superuser) → bypasses RLS → used for auth lookups only
- *   - TenantPrismaService (db_user) → subject to RLS → used for all tenant data queries
+ *   - PrismaService (migration/admin role) → bypasses RLS → used for auth lookups only
+ *   - TenantPrismaService (nexio_app) → subject to RLS → used for tenant data queries
  *
  * PostgreSQL superusers are ALWAYS exempt from Row-Level Security, even when
  * FORCE ROW LEVEL SECURITY is set. The only way to enforce RLS is to connect
- * as a non-superuser role (db_user), then set app.current_tenant_id inside a
+ * as a non-superuser role (nexio_app), then set app.current_tenant_id inside a
  * transaction so the RLS policy can filter rows by tenant.
  *
  * Every call to exec() wraps the operation in a transaction that:
