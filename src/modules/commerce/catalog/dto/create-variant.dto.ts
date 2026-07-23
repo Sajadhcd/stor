@@ -29,4 +29,8 @@ export class CreateVariantDto {
   @IsNumber()
   @Min(0)
   weight?: number;
+
+  @ApiPropertyOptional({ description: 'Variant attributes object e.g. { color: "Red", size: "XL" }' })
+  @IsOptional()
+  attributes?: Record<string, any>;
 }

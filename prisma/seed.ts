@@ -562,6 +562,7 @@ async function main() {
           price: '120.0000',
           costPrice: '45.0000',
           weight: '0.220',
+          attributes: { color: 'Black', size: 'M' },
         },
         create: {
           id: ids.variantTeeM,
@@ -572,6 +573,7 @@ async function main() {
           price: '120.0000',
           costPrice: '45.0000',
           weight: '0.220',
+          attributes: { color: 'Black', size: 'M' },
         },
       });
       const variantTeeL = await tx.productVariant.upsert({
@@ -582,6 +584,7 @@ async function main() {
           price: '120.0000',
           costPrice: '45.0000',
           weight: '0.250',
+          attributes: { color: 'Black', size: 'L' },
         },
         create: {
           id: ids.variantTeeL,
@@ -592,6 +595,7 @@ async function main() {
           price: '120.0000',
           costPrice: '45.0000',
           weight: '0.250',
+          attributes: { color: 'Black', size: 'L' },
         },
       });
       const variantSneaker42 = await tx.productVariant.upsert({
@@ -604,6 +608,7 @@ async function main() {
           price: '450.0000',
           costPrice: '160.0000',
           weight: '0.820',
+          attributes: { color: 'Blue', size: '42' },
         },
         create: {
           id: ids.variantSneaker42,
@@ -614,6 +619,7 @@ async function main() {
           price: '450.0000',
           costPrice: '160.0000',
           weight: '0.820',
+          attributes: { color: 'Blue', size: '42' },
         },
       });
       const variantJournalNavy = await tx.productVariant.upsert({

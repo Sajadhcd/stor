@@ -35,18 +35,61 @@ export class ProductsService {
         where.isPublished = query.isPublished;
       }
       if (query?.search) {
+        const s = query.search.trim();
         where.OR = [
-          { variants: { some: { sku: { contains: query.search, mode: 'insensitive' } } } },
+          { titleTranslations: { path: ['ar'], string_contains: s } },
+          { titleTranslations: { path: ['en'], string_contains: s } },
+          { descriptionTranslations: { path: ['ar'], string_contains: s } },
+          { descriptionTranslations: { path: ['en'], string_contains: s } },
+          { slug: { contains: s, mode: 'insensitive' } },
+          { brand: { name: { contains: s, mode: 'insensitive' } } },
+          { variants: { some: { sku: { contains: s, mode: 'insensitive' } } } },
         ];
       }
       if (query?.categoryId) {
         where.categories = { some: { categoryId: query.categoryId } };
       }
+      if (query?.brandId) {
+        where.brandId = query.brandId;
+      }
+      if (query?.brandSlug) {
+        where.brand = { slug: query.brandSlug };
+      }
+
+      const variantWhere: Prisma.ProductVariantWhereInput = {};
+      if (query?.minPrice !== undefined || query?.maxPrice !== undefined) {
+        variantWhere.price = {};
+        if (query.minPrice !== undefined) variantWhere.price.gte = query.minPrice;
+        if (query.maxPrice !== undefined) variantWhere.price.lte = query.maxPrice;
+      }
+      if (query?.inStockOnly) {
+        variantWhere.stockLevels = {
+          some: {
+            quantityPhysical: { gt: 0 },
+          },
+        };
+      }
+      if (query?.attributes && Object.keys(query.attributes).length > 0) {
+        const attrConditions = Object.entries(query.attributes).map(([key, val]) => ({
+          attributes: { path: [key], equals: val },
+        }));
+        variantWhere.AND = attrConditions;
+      }
+
+      if (Object.keys(variantWhere).length > 0) {
+        where.variants = { some: variantWhere };
+      }
+
       where.deletedAt = null;
 
       const take = query?.take || 20;
       const skip = query?.skip || 0;
-      const orderBy: Prisma.ProductOrderByWithRelationInput = query?.sortBy ? { [query.sortBy]: query.sortOrder || 'desc' } : { createdAt: 'desc' };
+      let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
+      if (query?.sortBy === 'created_at' || query?.sortBy === 'createdAt') {
+        orderBy = { createdAt: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+      } else if (query?.sortBy && query.sortBy !== 'price_asc' && query.sortBy !== 'price_desc' && query.sortBy !== 'title') {
+        orderBy = { [query.sortBy]: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+      }
 
       const [items, total] = await Promise.all([
         tx.product.findMany({
@@ -56,7 +99,11 @@ export class ProductsService {
             images: {
               orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
             },
-            variants: true,
+            variants: {
+              include: {
+                stockLevels: true,
+              },
+            },
             categories: {
               include: {
                 category: true,
@@ -70,7 +117,22 @@ export class ProductsService {
         tx.product.count({ where }),
       ]);
 
-      return new PaginatedResponseDto(items, total, query?.page || 1, query?.limit || 20);
+      let finalItems = items;
+      if (query?.sortBy === 'price_asc') {
+        finalItems = [...items].sort((a, b) => {
+          const minA = Math.min(...a.variants.map((v) => Number(v.price) || 0));
+          const minB = Math.min(...b.variants.map((v) => Number(v.price) || 0));
+          return minA - minB;
+        });
+      } else if (query?.sortBy === 'price_desc') {
+        finalItems = [...items].sort((a, b) => {
+          const maxA = Math.max(...a.variants.map((v) => Number(v.price) || 0));
+          const maxB = Math.max(...b.variants.map((v) => Number(v.price) || 0));
+          return maxB - maxA;
+        });
+      }
+
+      return new PaginatedResponseDto(finalItems, total, query?.page || 1, query?.limit || 20);
     });
 
     await this.cache.set(cacheKey, result, 300);
