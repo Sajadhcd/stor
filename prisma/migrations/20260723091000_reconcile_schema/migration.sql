@@ -1,0 +1,19 @@
+-- Add schema enums in their own migration so PostgreSQL commits the new values
+-- before later migrations use them in column defaults.
+
+CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'AUTHORIZED', 'PAID', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED');
+CREATE TYPE "FulfillmentStatus" AS ENUM ('UNFULFILLED', 'PROCESSING', 'PACKED', 'PARTIALLY_FULFILLED', 'FULFILLED', 'COMPLETED', 'RETURNED');
+CREATE TYPE "CartStatus" AS ENUM ('ACTIVE', 'MERGED', 'EXPIRED', 'CONVERTED', 'ABANDONED');
+CREATE TYPE "CheckoutStatus" AS ENUM ('DRAFT', 'IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'CANCELLED');
+
+ALTER TYPE "OrderStatus" ADD VALUE 'PENDING';
+ALTER TYPE "OrderStatus" ADD VALUE 'CONFIRMED';
+ALTER TYPE "OrderStatus" ADD VALUE 'PACKED';
+ALTER TYPE "OrderStatus" ADD VALUE 'COMPLETED';
+
+ALTER TYPE "ShipmentStatus" ADD VALUE 'PENDING';
+ALTER TYPE "ShipmentStatus" ADD VALUE 'PREPARED';
+ALTER TYPE "ShipmentStatus" ADD VALUE 'LABEL_GENERATED';
+ALTER TYPE "ShipmentStatus" ADD VALUE 'PACKED';
+ALTER TYPE "ShipmentStatus" ADD VALUE 'SHIPPED';
+ALTER TYPE "ShipmentStatus" ADD VALUE 'CANCELLED';
