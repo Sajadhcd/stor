@@ -34,6 +34,7 @@ try {
   assert(productsResponse.ok(), `Storefront products API returned ${productsResponse.status()}`);
 
   const productCards = storefront.locator('a[href^="/products/"]');
+  await productCards.nth(1).waitFor();
   assert((await productCards.count()) > 1, 'Storefront rendered too few product cards');
 
   const addDialogPromise = new Promise((resolve) => {
