@@ -44,6 +44,12 @@ export class TenantPrismaService implements OnModuleInit, OnModuleDestroy {
     await this.client.$disconnect();
   }
 
+  async ping(): Promise<void> {
+    await this.exec(async (tx) => {
+      await tx.$queryRaw`SELECT 1`;
+    });
+  }
+
   /**
    * Execute a database operation inside a transaction with the tenant RLS context set.
    * The request context (tenantId, userId, etc.) is read from AsyncLocalStorage
@@ -52,24 +58,30 @@ export class TenantPrismaService implements OnModuleInit, OnModuleDestroy {
   async exec<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     const ctx = requestContextStorage.getStore();
 
-    return this.client.$transaction(async (tx) => {
-      if (ctx?.tenantId) {
-        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${ctx.tenantId}, true)`;
-      }
+    return this.client.$transaction(
+      async (tx) => {
+        if (ctx?.tenantId) {
+          await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${ctx.tenantId}, true)`;
+        }
 
-      if (ctx?.userId) {
-        await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ctx.userId}, true)`;
-      }
+        if (ctx?.userId) {
+          await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ctx.userId}, true)`;
+        }
 
-      if (ctx?.clientIp) {
-        await tx.$executeRaw`SELECT set_config('app.current_client_ip', ${ctx.clientIp}, true)`;
-      }
+        if (ctx?.clientIp) {
+          await tx.$executeRaw`SELECT set_config('app.current_client_ip', ${ctx.clientIp}, true)`;
+        }
 
-      if (ctx?.userAgent) {
-        await tx.$executeRaw`SELECT set_config('app.current_user_agent', ${ctx.userAgent}, true)`;
-      }
+        if (ctx?.userAgent) {
+          await tx.$executeRaw`SELECT set_config('app.current_user_agent', ${ctx.userAgent}, true)`;
+        }
 
-      return fn(tx);
-    });
+        return fn(tx);
+      },
+      {
+        maxWait: 10_000,
+        timeout: 30_000,
+      },
+    );
   }
 }

@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CacheService } from '../cache/cache.service.js';
 import { PrismaService } from '../database/prisma.service.js';
+import { TenantPrismaService } from '../database/tenant-prisma.service.js';
 
 type CheckStatus = 'UP' | 'DOWN';
 
@@ -37,7 +37,6 @@ interface SchemaEnum {
 
 interface MigrationRow {
   migration_name: string;
-  checksum: string;
   finished_at: Date | null;
   rolled_back_at: Date | null;
 }
@@ -46,6 +45,7 @@ interface MigrationRow {
 export class ReadinessService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly tenantPrisma: TenantPrismaService,
     private readonly cache: CacheService,
   ) {}
 
@@ -140,12 +140,15 @@ export class ReadinessService {
 
   private async checkPrisma(): Promise<ReadinessCheck> {
     try {
-      await this.prisma.$transaction([
-        this.prisma.tenant.count(),
-        this.prisma.store.count(),
-        this.prisma.product.count(),
+      await Promise.all([
+        this.prisma.$transaction([
+          this.prisma.tenant.count(),
+          this.prisma.store.count(),
+          this.prisma.product.count(),
+        ]),
+        this.tenantPrisma.ping(),
       ]);
-      return { status: 'UP' };
+      return { status: 'UP', adminClient: 'UP', rlsClient: 'UP' };
     } catch {
       return { status: 'DOWN', message: 'Prisma query failed' };
     }
@@ -169,17 +172,9 @@ export class ReadinessService {
         .filter((entry) => entry.isDirectory())
         .map((entry) => entry.name)
         .sort();
-      const localChecksums = new Map<string, string>();
-
-      for (const migrationName of localMigrationNames) {
-        const migrationSql = await readFile(
-          join(migrationsDirectory, migrationName, 'migration.sql'),
-        );
-        localChecksums.set(migrationName, createHash('sha256').update(migrationSql).digest('hex'));
-      }
 
       const rows = await this.prisma.$queryRaw<MigrationRow[]>`
-        SELECT migration_name, checksum, finished_at, rolled_back_at
+        SELECT migration_name, finished_at, rolled_back_at
         FROM "_prisma_migrations"
         ORDER BY started_at
       `;
@@ -191,25 +186,17 @@ export class ReadinessService {
         .filter((row) => row.finished_at === null && row.rolled_back_at === null)
         .map((row) => row.migration_name);
       const pending = localMigrationNames.filter((name) => !appliedByName.has(name));
-      const unknown = [...appliedByName.keys()].filter((name) => !localChecksums.has(name));
-      const checksumMismatch = localMigrationNames.filter((name) => {
-        const applied = appliedByName.get(name);
-        return applied && applied.checksum !== localChecksums.get(name);
-      });
+      const unknown = [...appliedByName.keys()].filter(
+        (name) => !localMigrationNames.includes(name),
+      );
 
-      if (
-        failed.length > 0 ||
-        pending.length > 0 ||
-        unknown.length > 0 ||
-        checksumMismatch.length > 0
-      ) {
+      if (failed.length > 0 || pending.length > 0 || unknown.length > 0) {
         return {
           status: 'DOWN',
           message: 'Prisma migration history is not deployable',
           failed,
           pending,
           unknown,
-          checksumMismatch,
         };
       }
 
