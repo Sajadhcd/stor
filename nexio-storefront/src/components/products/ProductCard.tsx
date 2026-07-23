@@ -13,6 +13,9 @@ export function ProductCard({ product }: { product: any }) {
     ? Number(product.variants[0].priceOverride || product.variants[0].price || 75000)
     : 75000;
 
+  const primaryImage = product.images?.find((img: any) => img.isPrimary)?.url || product.images?.[0]?.url;
+  const brandName = product.brand?.name;
+
   const handleAddToCart = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -47,13 +50,21 @@ export function ProductCard({ product }: { product: any }) {
   return (
     <Link
       href={`/products/${product.id}`}
-      className="bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col group cursor-pointer"
+      className="bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col group cursor-pointer relative"
     >
       {/* Product Image Container */}
-      <div className="aspect-square bg-slate-100 relative overflow-hidden flex items-center justify-center p-6">
-        <div className="w-20 h-20 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-2xl group-hover:scale-110 transition-transform">
-          🛍️
-        </div>
+      <div className="aspect-square bg-slate-100 relative overflow-hidden flex items-center justify-center">
+        {primaryImage ? (
+          <img
+            src={primaryImage}
+            alt={title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        ) : (
+          <div className="w-20 h-20 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-2xl group-hover:scale-110 transition-transform">
+            🛍️
+          </div>
+        )}
         <span className="absolute top-3 right-3 px-2.5 py-1 bg-slate-900/80 backdrop-blur-xs text-white rounded-lg text-[10px] font-bold">
           توصيل لكافة المحافظات
         </span>
@@ -62,6 +73,11 @@ export function ProductCard({ product }: { product: any }) {
       {/* Product Information */}
       <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
         <div>
+          {brandName && (
+            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md inline-block mb-1.5 border border-emerald-200/50">
+              {brandName}
+            </span>
+          )}
           <h3 className="font-bold text-slate-900 text-sm group-hover:text-emerald-600 transition-colors line-clamp-2">
             {title}
           </h3>

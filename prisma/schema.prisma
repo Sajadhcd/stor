@@ -118,6 +118,8 @@ model Tenant {
   deliveryZones        DeliveryZone[]
   installmentContracts InstallmentContract[]
   journalEntries       JournalEntry[]
+  brands               Brand[]
+  productImages        ProductImage[]
 
   @@map("tenants")
 }
@@ -231,26 +233,71 @@ model Category {
   @@map("categories")
 }
 
+model Brand {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  name        String   @db.VarChar(255)
+  slug        String   @db.VarChar(100)
+  logoUrl     String?  @map("logo_url") @db.VarChar(1024)
+  description String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("brands")
+}
+
 model Product {
   id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId                String    @map("tenant_id") @db.Uuid
   storeId                 String    @map("store_id") @db.Uuid
+  brandId                 String?   @map("brand_id") @db.Uuid
   titleTranslations       Json      @map("title_translations")
   descriptionTranslations Json?     @map("description_translations")
   attributes              Json?
+  slug                    String?   @db.VarChar(255)
+  metaTitle               String?   @map("meta_title") @db.VarChar(255)
+  metaDescription         String?   @map("meta_description") @db.VarChar(500)
   isPublished             Boolean   @default(false) @map("is_published")
   deletedAt               DateTime? @map("deleted_at") @db.Timestamptz
   createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  store  Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  store  Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  brand  Brand?  @relation(fields: [brandId], references: [id], onDelete: SetNull)
 
   variants   ProductVariant[]
   categories CategoriesOnProducts[]
+  images     ProductImage[]
 
+  @@unique([tenantId, slug])
   @@index([tenantId, storeId])
   @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  variantId String?  @map("variant_id") @db.Uuid
+  url       String   @db.VarChar(1024)
+  altText   String?  @map("alt_text") @db.VarChar(255)
+  isPrimary Boolean  @default(false) @map("is_primary")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, productId])
+  @@index([productId, isPrimary])
+  @@map("product_images")
 }
 
 // Join table for Product <-> Category relation
@@ -281,9 +328,10 @@ model ProductVariant {
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  stockLevels StockLevel[]
-  cartItems   CartItem[]
-  orderItems  OrderItem[]
+  images         ProductImage[]
+  stockLevels    StockLevel[]
+  cartItems      CartItem[]
+  orderItems     OrderItem[]
   stockMovements StockMovement[]
 
   @@unique([tenantId, sku])

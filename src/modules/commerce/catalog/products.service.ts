@@ -13,6 +13,11 @@ export class ProductsService {
     private readonly cache: CacheService
   ) {}
 
+  private getTenantId(): string {
+    const ctx = requestContextStorage.getStore();
+    return ctx?.tenantId || 'global';
+  }
+
   async findAll(query?: ProductQueryDto) {
     const ctx = requestContextStorage.getStore();
     const tenantId = ctx?.tenantId || 'global';
@@ -47,6 +52,10 @@ export class ProductsService {
         tx.product.findMany({
           where,
           include: {
+            brand: true,
+            images: {
+              orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+            },
             variants: true,
             categories: {
               include: {
@@ -80,6 +89,10 @@ export class ProductsService {
       return tx.product.findFirst({
         where: { id, deletedAt: null },
         include: {
+          brand: true,
+          images: {
+            orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          },
           variants: true,
           categories: {
             include: {
@@ -99,6 +112,11 @@ export class ProductsService {
 
   async create(data: {
     storeId?: string;
+    brandId?: string;
+    slug?: string;
+    metaTitle?: string;
+    metaDescription?: string;
+    imageUrls?: string[];
     titleTranslations: any;
     descriptionTranslations?: any;
     attributes?: any;
@@ -133,10 +151,23 @@ export class ProductsService {
         }
       }
 
+      if (data.brandId) {
+        const brand = await tx.brand.findFirst({
+          where: { id: data.brandId, tenantId: data.tenantId },
+        });
+        if (!brand) {
+          throw new NotFoundException(`Brand with ID ${data.brandId} not found`);
+        }
+      }
+
       const product = await tx.product.create({
         data: {
           tenantId: data.tenantId,
           storeId: storeId!,
+          brandId: data.brandId,
+          slug: data.slug,
+          metaTitle: data.metaTitle,
+          metaDescription: data.metaDescription,
           titleTranslations: data.titleTranslations,
           descriptionTranslations: data.descriptionTranslations,
           attributes: data.attributes,
@@ -144,8 +175,21 @@ export class ProductsService {
         },
       });
 
+      if (data.imageUrls && data.imageUrls.length > 0) {
+        for (let i = 0; i < data.imageUrls.length; i++) {
+          await tx.productImage.create({
+            data: {
+              tenantId: data.tenantId,
+              productId: product.id,
+              url: data.imageUrls[i],
+              isPrimary: i === 0,
+              sortOrder: i,
+            },
+          });
+        }
+      }
+
       if (data.categoryIds && data.categoryIds.length > 0) {
-        // Validate categories exist and belong to this tenant
         const validCategories = await tx.category.findMany({
           where: {
             id: { in: data.categoryIds },
@@ -179,6 +223,11 @@ export class ProductsService {
   async update(
     id: string,
     data: {
+      brandId?: string;
+      slug?: string;
+      metaTitle?: string;
+      metaDescription?: string;
+      imageUrls?: string[];
       titleTranslations?: any;
       descriptionTranslations?: any;
       attributes?: any;
@@ -187,13 +236,141 @@ export class ProductsService {
   ) {
     const product = await this.findById(id);
     const result = await this.db.exec(async (tx) => {
-      return tx.product.update({
+      if (data.brandId) {
+        const brand = await tx.brand.findFirst({
+          where: { id: data.brandId, tenantId: product.tenantId },
+        });
+        if (!brand) {
+          throw new NotFoundException(`Brand with ID ${data.brandId} not found`);
+        }
+      }
+
+      const updated = await tx.product.update({
         where: { id },
-        data,
+        data: {
+          brandId: data.brandId,
+          slug: data.slug,
+          metaTitle: data.metaTitle,
+          metaDescription: data.metaDescription,
+          titleTranslations: data.titleTranslations,
+          descriptionTranslations: data.descriptionTranslations,
+          attributes: data.attributes,
+          isPublished: data.isPublished,
+        },
       });
+
+      if (data.imageUrls && data.imageUrls.length > 0) {
+        await tx.productImage.deleteMany({ where: { productId: id } });
+        for (let i = 0; i < data.imageUrls.length; i++) {
+          await tx.productImage.create({
+            data: {
+              tenantId: product.tenantId,
+              productId: id,
+              url: data.imageUrls[i],
+              isPrimary: i === 0,
+              sortOrder: i,
+            },
+          });
+        }
+      }
+
+      return updated;
     });
 
     await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    return result;
+  }
+
+  async getProductImages(productId: string, tenantIdOverride?: string) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    await this.findById(productId);
+
+    return this.db.exec(async (tx) => {
+      return tx.productImage.findMany({
+        where: { productId, tenantId },
+        orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+      });
+    });
+  }
+
+  async addProductImage(
+    productId: string,
+    data: {
+      url: string;
+      altText?: string;
+      isPrimary?: boolean;
+      variantId?: string;
+      sortOrder?: number;
+    },
+    tenantIdOverride?: string
+  ) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    const product = await this.findById(productId);
+
+    const result = await this.db.exec(async (tx) => {
+      if (data.isPrimary) {
+        await tx.productImage.updateMany({
+          where: { productId, tenantId },
+          data: { isPrimary: false },
+        });
+      }
+
+      const existingCount = await tx.productImage.count({
+        where: { productId, tenantId },
+      });
+
+      const isPrimary = data.isPrimary ?? (existingCount === 0);
+
+      return tx.productImage.create({
+        data: {
+          tenantId,
+          productId,
+          variantId: data.variantId,
+          url: data.url,
+          altText: data.altText,
+          isPrimary,
+          sortOrder: data.sortOrder ?? existingCount,
+        },
+      });
+    });
+
+    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    return result;
+  }
+
+  async deleteProductImage(productId: string, imageId: string, tenantIdOverride?: string) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    await this.findById(productId);
+
+    const result = await this.db.exec(async (tx) => {
+      const image = await tx.productImage.findFirst({
+        where: { id: imageId, productId, tenantId },
+      });
+      if (!image) {
+        throw new NotFoundException(`Image ${imageId} not found under product ${productId}`);
+      }
+
+      await tx.productImage.delete({
+        where: { id: imageId },
+      });
+
+      if (image.isPrimary) {
+        const nextImage = await tx.productImage.findFirst({
+          where: { productId, tenantId },
+          orderBy: { sortOrder: 'asc' },
+        });
+        if (nextImage) {
+          await tx.productImage.update({
+            where: { id: nextImage.id },
+            data: { isPrimary: true },
+          });
+        }
+      }
+
+      return { success: true, deletedId: imageId };
+    });
+
+    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
     return result;
   }
 

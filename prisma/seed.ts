@@ -387,12 +387,42 @@ async function main() {
         },
       });
 
+      const brandVelo = await tx.brand.upsert({
+        where: { tenantId_slug: { tenantId: tenantVelo.id, slug: 'velo-activewear' } },
+        update: { name: 'Velo Activewear', logoUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=400' },
+        create: {
+          id: 'e1111111-1111-4111-8111-111111111111',
+          tenantId: tenantVelo.id,
+          name: 'Velo Activewear',
+          slug: 'velo-activewear',
+          logoUrl: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=400',
+          description: 'High-performance athletic apparel and footwear.',
+        },
+      });
+
+      const brandScribble = await tx.brand.upsert({
+        where: { tenantId_slug: { tenantId: tenantScribble.id, slug: 'scribble-press' } },
+        update: { name: 'Scribble Press', logoUrl: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400' },
+        create: {
+          id: 'e1111111-1111-4111-8111-111111111112',
+          tenantId: tenantScribble.id,
+          name: 'Scribble Press',
+          slug: 'scribble-press',
+          logoUrl: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400',
+          description: 'Premium notebooks, journals, and office stationery.',
+        },
+      });
+
       const productDefinitions = [
         {
           id: ids.productVeloTee,
           tenantId: tenantVelo.id,
           storeId: storeVeloSa.id,
+          brandId: brandVelo.id,
           sku: 'VELO-TEE-BLK-M',
+          slug: 'velo-pro-tech-tee',
+          metaTitle: 'Velo Pro Tech Tee - Premium Training Shirt',
+          metaDescription: 'High-performance moisture-wicking training shirt engineered for peak athletic comfort.',
           titleTranslations: { en: 'Velo Pro Tech Tee', ar: 'تي شيرت فيلو برو الرياضي' },
           descriptionTranslations: {
             en: 'High-performance moisture-wicking training shirt.',
@@ -403,12 +433,20 @@ async function main() {
             fit: 'Athletic Fit',
             gender: 'unisex',
           },
+          images: [
+            { url: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800', altText: 'Velo Pro Tech Tee Front', isPrimary: true, sortOrder: 0 },
+            { url: 'https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=800', altText: 'Velo Pro Tech Tee Back', isPrimary: false, sortOrder: 1 },
+          ],
         },
         {
           id: ids.productVeloSneaker,
           tenantId: tenantVelo.id,
           storeId: storeVeloSa.id,
+          brandId: brandVelo.id,
           sku: 'VELO-APX-BLU-42',
+          slug: 'velo-apex-run-sneaker',
+          metaTitle: 'Velo Apex Run Sneaker - Carbon Plated Shoes',
+          metaDescription: 'Lightweight carbon-plated marathon running shoes for speed and endurance.',
           titleTranslations: { en: 'Velo Apex Run Sneaker', ar: 'حذاء الجري فيلو أبيكس' },
           descriptionTranslations: {
             en: 'Lightweight carbon-plated marathon running shoes.',
@@ -419,17 +457,28 @@ async function main() {
             cushioning: 'Apex Foam',
             offset: '8mm',
           },
+          images: [
+            { url: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800', altText: 'Velo Apex Run Sneaker Red', isPrimary: true, sortOrder: 0 },
+            { url: 'https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=800', altText: 'Velo Apex Run Sneaker Detail', isPrimary: false, sortOrder: 1 },
+          ],
         },
         {
           id: ids.productScribbleJournal,
           tenantId: tenantScribble.id,
           storeId: storeScribbleUs.id,
+          brandId: brandScribble.id,
           sku: 'SCR-JRNL-NVY',
+          slug: 'scribble-dot-grid-journal',
+          metaTitle: 'Scribble Dot Grid Journal',
+          metaDescription: 'Premium 160 GSM dotted paper notebook for journaling.',
           titleTranslations: { en: 'Scribble Dot Grid Journal' },
           descriptionTranslations: {
             en: 'Premium 160 GSM dotted paper notebook for journaling.',
           },
           attributes: { paper_weight: '160 GSM', binding: 'Hardcover', pages: 160 },
+          images: [
+            { url: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=800', altText: 'Scribble Dot Grid Journal Navy', isPrimary: true, sortOrder: 0 },
+          ],
         },
       ] as const;
       const products = [];
@@ -443,23 +492,41 @@ async function main() {
         });
         const data = {
           storeId: definition.storeId,
+          brandId: definition.brandId,
+          slug: definition.slug,
+          metaTitle: definition.metaTitle,
+          metaDescription: definition.metaDescription,
           titleTranslations: definition.titleTranslations,
           descriptionTranslations: definition.descriptionTranslations,
           attributes: definition.attributes,
           isPublished: true,
           deletedAt: null,
         };
-        products.push(
-          await tx.product.upsert({
-            where: { id: existing?.id ?? definition.id },
-            update: data,
-            create: {
-              id: definition.id,
+        const product = await tx.product.upsert({
+          where: { id: existing?.id ?? definition.id },
+          update: data,
+          create: {
+            id: definition.id,
+            tenantId: definition.tenantId,
+            ...data,
+          },
+        });
+        products.push(product);
+
+        // Seed product images
+        await tx.productImage.deleteMany({ where: { productId: product.id } });
+        for (const img of definition.images) {
+          await tx.productImage.create({
+            data: {
               tenantId: definition.tenantId,
-              ...data,
+              productId: product.id,
+              url: img.url,
+              altText: img.altText,
+              isPrimary: img.isPrimary,
+              sortOrder: img.sortOrder,
             },
-          }),
-        );
+          });
+        }
       }
       const [productVeloTee, productVeloSneaker, productScribbleJournal] = products;
 

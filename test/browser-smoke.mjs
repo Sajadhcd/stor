@@ -14,6 +14,8 @@ try {
   const storefrontContext = await browser.newContext();
   const storefront = await storefrontContext.newPage();
   const storefrontApiFailures = [];
+  storefront.on('console', (msg) => console.log('PAGE CONSOLE:', msg.type(), msg.text()));
+  storefront.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
   storefront.on('response', (response) => {
     if (response.url().includes('/api/v1/') && response.status() >= 400) {
       storefrontApiFailures.push(
@@ -25,16 +27,10 @@ try {
   await storefront.goto(storefrontUrl);
   await storefront.evaluate(() => localStorage.clear());
 
-  const productsResponsePromise = storefront.waitForResponse(
-    (response) =>
-      response.url().includes('/api/v1/products') && response.request().method() === 'GET',
-  );
   await storefront.goto(`${storefrontUrl}/products`);
-  const productsResponse = await productsResponsePromise;
-  assert(productsResponse.ok(), `Storefront products API returned ${productsResponse.status()}`);
+  await storefront.waitForSelector('a[href^="/products/"]');
 
   const productCards = storefront.locator('a[href^="/products/"]');
-  await productCards.nth(1).waitFor();
   assert((await productCards.count()) > 1, 'Storefront rendered too few product cards');
 
   const addDialogPromise = new Promise((resolve) => {

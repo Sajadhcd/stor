@@ -300,6 +300,10 @@ describe('ProductsService', () => {
       expect(mockTx.product.findFirst).toHaveBeenCalledWith({
         where: { id: 'prod-123', deletedAt: null },
         include: {
+          brand: true,
+          images: {
+            orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          },
           variants: true,
           categories: { include: { category: true } },
         },

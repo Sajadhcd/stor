@@ -16,11 +16,17 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
 
+  const [selectedImage, setSelectedImage] = useState<string>('');
+
   useEffect(() => {
     async function loadProduct() {
       try {
         const data = await apiFetch(`/products/${id}`);
         setProduct(data);
+        if (data?.images && data.images.length > 0) {
+          const primary = data.images.find((img: any) => img.isPrimary)?.url || data.images[0].url;
+          setSelectedImage(primary);
+        }
       } catch (err: any) {
         console.error('Failed to load product details:', err);
       } finally {
@@ -49,6 +55,9 @@ export default function ProductDetailPage() {
   const price = product.variants && product.variants.length > 0
     ? Number(product.variants[0].priceOverride || product.variants[0].price || 75000)
     : 75000;
+
+  const images = product.images || [];
+  const brand = product.brand;
 
   const handleAddToCart = () => {
     const variantId = product.variants?.[0]?.id;
@@ -80,6 +89,10 @@ export default function ProductDetailPage() {
 
   return (
     <div className="space-y-8">
+      {/* Dynamic SEO Meta Head */}
+      {product.metaTitle && <title>{product.metaTitle}</title>}
+      {product.metaDescription && <meta name="description" content={product.metaDescription} />}
+
       {/* Back Button */}
       <Link href="/products" className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-emerald-600">
         <ArrowRight className="w-4 h-4" />
@@ -89,16 +102,45 @@ export default function ProductDetailPage() {
       {/* Main Details Card */}
       <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs p-6 md:p-10 grid grid-cols-1 md:grid-cols-2 gap-10">
         {/* Product Image Gallery */}
-        <div className="aspect-square bg-slate-100 rounded-2xl flex items-center justify-center p-12 border border-slate-200/60 relative">
-          <div className="text-8xl">🛍️</div>
-          <span className="absolute top-4 right-4 px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-md">
-            شحن شامل لـ 18 محافظة
-          </span>
+        <div className="space-y-4">
+          <div className="aspect-square bg-slate-100 rounded-2xl flex items-center justify-center border border-slate-200/60 relative overflow-hidden">
+            {selectedImage ? (
+              <img src={selectedImage} alt={title} className="w-full h-full object-cover" />
+            ) : (
+              <div className="text-8xl">🛍️</div>
+            )}
+            <span className="absolute top-4 right-4 px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-md">
+              شحن شامل لـ 18 محافظة
+            </span>
+          </div>
+
+          {/* Gallery Thumbnails */}
+          {images.length > 1 && (
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {images.map((img: any, index: number) => (
+                <button
+                  key={index}
+                  onClick={() => setSelectedImage(img.url)}
+                  className={`w-16 h-16 rounded-xl border-2 overflow-hidden shrink-0 transition-all ${
+                    selectedImage === img.url ? 'border-emerald-600 ring-2 ring-emerald-600/20' : 'border-slate-200 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Product Information & Purchase Panel */}
         <div className="space-y-6 flex flex-col justify-between">
           <div className="space-y-4">
+            {brand && (
+              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-lg inline-block border border-emerald-200/60">
+                العلامة التجارية: {brand.name}
+              </span>
+            )}
+
             <h1 className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">{title}</h1>
             <p className="text-sm text-slate-600 leading-relaxed">{description}</p>
 
