@@ -21,10 +21,13 @@ export class ConfigService {
    * Non-superuser application database URL.
    * Used by TenantPrismaService for all tenant-scoped queries.
    * db_user is subject to PostgreSQL Row-Level Security (RLS) policies.
-   * Falls back to DATABASE_URL if APP_DATABASE_URL is not set.
    */
   get appDatabaseUrl(): string {
-    return this.nestConfigService.get<string>('APP_DATABASE_URL') || this.databaseUrl;
+    const url = this.nestConfigService.get<string>('APP_DATABASE_URL');
+    if (!url) {
+      throw new Error('APP_DATABASE_URL is not defined in environment variables');
+    }
+    return url;
   }
 
   get jwtSecret(): string {
@@ -92,4 +95,3 @@ export class ConfigService {
     return this.nestConfigService.get<string>(envKey, defaultSecret);
   }
 }
-

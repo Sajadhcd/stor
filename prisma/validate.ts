@@ -1,4 +1,10 @@
-import { PrismaClient } from '@prisma/client'
+import 'dotenv/config';
+import { PrismaClient } from '@prisma/client';
+
+const appDatabaseUrl = process.env.APP_DATABASE_URL;
+if (!appDatabaseUrl) {
+  throw new Error('APP_DATABASE_URL is required for RLS validation');
+}
 
 // Admin client connects as postgres superuser (to setup mock user/IP, seed, read logs)
 const adminPrisma = new PrismaClient()
@@ -7,10 +13,10 @@ const adminPrisma = new PrismaClient()
 const appPrisma = new PrismaClient({
   datasources: {
     db: {
-      url: 'postgresql://db_user:db_user@localhost:5432/nexio_commerce?schema=public'
+      url: appDatabaseUrl,
     }
-  }
-})
+  },
+});
 
 async function main() {
   console.log('--- START DATABASE VALIDATION ---')
