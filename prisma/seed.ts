@@ -124,6 +124,7 @@ async function main() {
           },
         },
         update: {
+          passwordHash,
           name: 'Sarah Jenkins',
           roleId: 'tenant_owner',
           status: 'ACTIVE',
@@ -145,6 +146,7 @@ async function main() {
           },
         },
         update: {
+          passwordHash,
           name: 'Michael Scott',
           roleId: 'tenant_owner',
           status: 'ACTIVE',
@@ -166,6 +168,7 @@ async function main() {
           },
         },
         update: {
+          passwordHash,
           name: 'Nexio Platform Administrator',
           roleId: 'platform_admin',
           status: 'ACTIVE',

@@ -21,6 +21,7 @@ services:
       start_period: 10s
     networks:
       - nexio-internal
+      - nexio-host
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -53,6 +54,7 @@ services:
       start_period: 5s
     networks:
       - nexio-internal
+      - nexio-host
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -62,6 +64,9 @@ networks:
   nexio-internal:
     name: nexio-internal
     internal: true
+  nexio-host:
+    name: nexio-host
+    driver: bridge
 
 volumes:
   pgdata:
