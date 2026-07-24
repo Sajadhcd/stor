@@ -16,22 +16,90 @@ try {
   const storefrontApiFailures = [];
   storefront.on('console', (msg) => console.log('PAGE CONSOLE:', msg.type(), msg.text()));
   storefront.on('pageerror', (err) => console.error('PAGE ERROR:', err.message));
-  storefront.on('response', (response) => {
+  storefront.on('response', async (response) => {
     if (response.url().includes('/api/v1/') && response.status() >= 400) {
-      storefrontApiFailures.push(
-        `${response.status()} ${response.request().method()} ${response.url()}`,
-      );
+      const errStr = `${response.status()} ${response.request().method()} ${response.url()}`;
+      storefrontApiFailures.push(errStr);
+      try {
+        const text = await response.text();
+        console.error('API RESPONSE ERROR:', errStr, '\nPayload:', text);
+      } catch {
+        console.error('API RESPONSE ERROR:', errStr);
+      }
     }
   });
 
   await storefront.goto(storefrontUrl);
   await storefront.evaluate(() => localStorage.clear());
 
+  // --- 1. CATALOG FILTERS SMOKE TESTS ---
   await storefront.goto(`${storefrontUrl}/products`);
-  await storefront.waitForSelector('a[href^="/products/"]');
+  await storefront.waitForSelector('input[placeholder*="ابحث"]');
 
-  const productCards = storefront.locator('a[href^="/products/"]');
-  assert((await productCards.count()) > 1, 'Storefront rendered too few product cards');
+  // Search filter
+  await storefront.fill('input[placeholder*="ابحث"]', 'تي شيرت');
+  await storefront.waitForTimeout(500); // Wait for debounce
+  assert(storefront.url().includes('search='), 'URL did not update with search parameter');
+
+  // Brand filter
+  await storefront.selectOption('select:has-text("جميع الماركات")', { label: 'Velo Activewear' });
+  await storefront.waitForTimeout(500);
+  assert(storefront.url().includes('brandSlug=velo-activewear'), 'URL did not update with brand slug');
+
+  // Price range
+  await storefront.fill('input[placeholder="من"]', '50');
+  await storefront.fill('input[placeholder="إلى"]', '500');
+  await storefront.waitForTimeout(500);
+  assert(storefront.url().includes('minPrice=50'), 'URL did not update with min price');
+  assert(storefront.url().includes('maxPrice=500'), 'URL did not update with max price');
+
+  // In stock only
+  await storefront.click('input[id="inStockOnly"]');
+  await storefront.waitForTimeout(500);
+  assert(storefront.url().includes('inStockOnly=true'), 'URL did not update with inStockOnly');
+
+  // Sorting
+  await storefront.selectOption('select:has-text("الأحدث أولاً")', { value: 'price_asc' });
+  await storefront.waitForTimeout(500);
+  assert(storefront.url().includes('sortBy=price_asc'), 'URL did not update with sortBy');
+
+  // Reload page and verify filters persist
+  const filterUrl = storefront.url();
+  await storefront.reload();
+  await storefront.waitForSelector('input[placeholder*="ابحث"]');
+  assert.equal(storefront.url(), filterUrl, 'URL did not persist filters after page reload');
+
+  // Clear filters
+  await storefront.click('button:has-text("إعادة ضبط")');
+  await storefront.waitForTimeout(500);
+  assert(!storefront.url().includes('search='), 'Filters were not cleared from URL');
+
+  // --- 2. VARIANT SELECTION SMOKE TESTS ---
+  const teeCard = storefront.locator('a[href^="/products/"]:has-text("تي شيرت")');
+  await teeCard.waitFor();
+  await teeCard.click();
+  await storefront.waitForSelector('button:has-text("M")');
+
+  // Click variants and verify selection
+  await storefront.click('button:has-text("Black")');
+  await storefront.click('button:has-text("M")');
+  await storefront.waitForSelector('span:has-text("متوفر")');
+
+  // Add selected variant to cart
+  await storefront.click('button:has-text("إضافة للسلة")');
+  await storefront.waitForURL('**/cart');
+
+  // Verify cart details
+  let cartItems = await storefront.evaluate(() =>
+    JSON.parse(localStorage.getItem('nexio_cart') ?? '[]'),
+  );
+  assert.equal(cartItems.length, 1, 'Cart does not contain resolved variant item');
+  assert(cartItems[0].variantId, 'Cart item is missing variantId');
+
+  // --- 3. QUICK ADD SMOKE TESTS ---
+  await storefront.goto(`${storefrontUrl}/products`);
+  const sneakerCard = storefront.locator('a[href^="/products/"]:has-text("حذاء الجري")');
+  await sneakerCard.waitFor();
 
   const addDialogPromise = new Promise((resolve) => {
     storefront.once('dialog', async (dialog) => {
@@ -39,19 +107,10 @@ try {
       await dialog.accept();
     });
   });
-  await productCards.nth(1).locator('button').click();
+  await sneakerCard.locator('button[title="إضافة للسلة"]').click();
   await addDialogPromise;
 
-  await storefront.goto(`${storefrontUrl}/cart`);
-  const cart = await storefront.evaluate(() =>
-    JSON.parse(localStorage.getItem('nexio_cart') ?? '[]'),
-  );
-  assert.equal(cart.length, 1, 'Cart did not retain the selected product');
-  assert(
-    await storefront.locator('a[href="/checkout"]').isVisible(),
-    'Checkout link is not visible',
-  );
-
+  // --- 4. CHECKOUT & ORDER CREATION SMOKE TESTS ---
   await storefront.goto(`${storefrontUrl}/checkout`);
   const checkoutInputs = storefront.locator('form input');
   assert.equal(await checkoutInputs.count(), 4, 'Unexpected checkout form shape');
@@ -90,6 +149,7 @@ try {
   assert.deepEqual(storefrontApiFailures, [], 'Storefront emitted failed API responses');
   await storefrontContext.close();
 
+  // --- 5. ADMIN ORDER VERIFICATION ---
   const adminContext = await browser.newContext();
   const admin = await adminContext.newPage();
   const adminApiFailures = [];
@@ -144,7 +204,7 @@ try {
   console.log(
     JSON.stringify({
       status: 'passed',
-      storefront: ['products', 'cart', 'checkout', 'order creation'],
+      storefront: ['products', 'cart', 'checkout', 'order creation', 'filters', 'variant selection'],
       admin: ['login', 'products', 'orders'],
       orderNumber: createdOrder.orderNumber,
     }),

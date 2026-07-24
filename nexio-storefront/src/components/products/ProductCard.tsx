@@ -2,48 +2,44 @@
 
 import Link from 'next/link';
 import { formatIQD } from '@/lib/currency';
-import { ShoppingBag, Star, ShieldCheck } from 'lucide-react';
+import { ShoppingBag } from 'lucide-react';
+import { addCartItem } from '@/lib/cart';
 
 export function ProductCard({ product }: { product: any }) {
   const title = typeof product.titleTranslations === 'object'
     ? product.titleTranslations.ar || product.titleTranslations.en || 'منتج متميز'
     : 'منتج متميز';
 
+  // Display the lowest valid variant price
   const price = product.variants && product.variants.length > 0
-    ? Number(product.variants[0].priceOverride || product.variants[0].price || 75000)
+    ? Math.min(...product.variants.map((v: any) => Number(v.priceOverride || v.price || 0)))
     : 75000;
 
   const primaryImage = product.images?.find((img: any) => img.isPrimary)?.url || product.images?.[0]?.url;
   const brandName = product.brand?.name;
 
-  const handleAddToCart = (e: React.MouseEvent) => {
+  // Determine variant states
+  const variants = product.variants || [];
+  const totalAvailableStock = variants.reduce((sum: number, v: any) => sum + (v.availableStock || 0), 0);
+  const isAllOutOfStock = variants.length === 0 || totalAvailableStock <= 0;
+  const hasMultipleVariants = variants.length > 1;
+
+  const handleAddToCart = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const variantId = product.variants?.[0]?.id;
-    if (!variantId) {
-      alert('هذا المنتج غير متاح للبيع حاليًا.');
-      return;
-    }
+    if (variants.length === 0) return;
 
-    const saved = localStorage.getItem('nexio_cart');
-    const cart = saved ? JSON.parse(saved) : [];
-    
-    const existingIndex = cart.findIndex((item: any) => item.id === product.id);
-    if (existingIndex > -1) {
-      cart[existingIndex].quantity += 1;
-    } else {
-      cart.push({
-        id: product.id,
-        title,
-        price,
-        variantId,
-        quantity: 1,
-      });
-    }
+    const variant = variants[0];
+    const itemPrice = Number(variant.priceOverride || variant.price || 75000);
 
-    localStorage.setItem('nexio_cart', JSON.stringify(cart));
-    window.dispatchEvent(new Event('storage'));
+    await addCartItem(
+      variant.id,
+      1,
+      title,
+      itemPrice,
+      product.id
+    );
     alert(`تمت إضافة "${title}" إلى السلة بنجاح!`);
   };
 
@@ -65,9 +61,17 @@ export function ProductCard({ product }: { product: any }) {
             🛍️
           </div>
         )}
-        <span className="absolute top-3 right-3 px-2.5 py-1 bg-slate-900/80 backdrop-blur-xs text-white rounded-lg text-[10px] font-bold">
-          توصيل لكافة المحافظات
-        </span>
+
+        {/* Out of Stock Badge */}
+        {isAllOutOfStock ? (
+          <span className="absolute top-3 left-3 px-2.5 py-1 bg-rose-600 text-white rounded-lg text-[10px] font-bold shadow-md">
+            نفذت الكمية
+          </span>
+        ) : (
+          <span className="absolute top-3 right-3 px-2.5 py-1 bg-slate-900/80 backdrop-blur-xs text-white rounded-lg text-[10px] font-bold">
+            توصيل لكافة المحافظات
+          </span>
+        )}
       </div>
 
       {/* Product Information */}
@@ -90,13 +94,34 @@ export function ProductCard({ product }: { product: any }) {
             <span className="text-base font-black text-emerald-600 block">{formatIQD(price)}</span>
           </div>
 
-          <button
-            onClick={handleAddToCart}
-            className="p-2.5 bg-slate-900 hover:bg-emerald-600 text-white hover:text-slate-950 rounded-xl transition-all shadow-md group-hover:scale-105"
-            title="إضافة للسلة"
-          >
-            <ShoppingBag className="w-4 h-4" />
-          </button>
+          {/* Conditional Cart Button / Action */}
+          {isAllOutOfStock ? (
+            <button
+              disabled
+              type="button"
+              className="p-2.5 bg-slate-100 text-slate-400 rounded-xl cursor-not-allowed border border-slate-200"
+              title="نفذت الكمية"
+            >
+              <ShoppingBag className="w-4 h-4" />
+            </button>
+          ) : hasMultipleVariants ? (
+            <button
+              type="button"
+              className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xxs font-black transition-all border border-indigo-100"
+              title="اختر الخيارات"
+            >
+              اختر الخيارات
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleAddToCart}
+              className="p-2.5 bg-slate-900 hover:bg-emerald-600 text-white hover:text-slate-950 rounded-xl transition-all shadow-md group-hover:scale-105"
+              title="إضافة للسلة"
+            >
+              <ShoppingBag className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </Link>

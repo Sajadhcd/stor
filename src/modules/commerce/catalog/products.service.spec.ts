@@ -312,7 +312,11 @@ describe('ProductsService', () => {
           images: {
             orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
           },
-          variants: true,
+          variants: {
+            include: {
+              stockLevels: true,
+            },
+          },
           categories: { include: { category: true } },
         },
       });

@@ -117,15 +117,29 @@ export class ProductsService {
         tx.product.count({ where }),
       ]);
 
-      let finalItems = items;
+      const mappedItems = items.map((product) => {
+        const mappedVariants = product.variants.map((v) => {
+          const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+          return {
+            ...v,
+            availableStock,
+          };
+        });
+        return {
+          ...product,
+          variants: mappedVariants,
+        };
+      });
+
+      let finalItems = mappedItems;
       if (query?.sortBy === 'price_asc') {
-        finalItems = [...items].sort((a, b) => {
+        finalItems = [...mappedItems].sort((a, b) => {
           const minA = Math.min(...a.variants.map((v) => Number(v.price) || 0));
           const minB = Math.min(...b.variants.map((v) => Number(v.price) || 0));
           return minA - minB;
         });
       } else if (query?.sortBy === 'price_desc') {
-        finalItems = [...items].sort((a, b) => {
+        finalItems = [...mappedItems].sort((a, b) => {
           const maxA = Math.max(...a.variants.map((v) => Number(v.price) || 0));
           const maxB = Math.max(...b.variants.map((v) => Number(v.price) || 0));
           return maxB - maxA;
@@ -155,7 +169,11 @@ export class ProductsService {
           images: {
             orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
           },
-          variants: true,
+          variants: {
+            include: {
+              stockLevels: true,
+            },
+          },
           categories: {
             include: {
               category: true,
@@ -168,8 +186,21 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    await this.cache.set(cacheKey, product, 300);
-    return product;
+    const mappedVariants = product.variants.map((v) => {
+      const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+      return {
+        ...v,
+        availableStock,
+      };
+    });
+
+    const mappedProduct = {
+      ...product,
+      variants: mappedVariants,
+    };
+
+    await this.cache.set(cacheKey, mappedProduct, 300);
+    return mappedProduct;
   }
 
   async create(data: {
