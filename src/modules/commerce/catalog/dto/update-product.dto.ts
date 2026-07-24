@@ -1,4 +1,4 @@
-import { IsOptional, IsBoolean, IsObject } from 'class-validator';
+import { IsOptional, IsBoolean, IsObject, IsUUID, IsString, IsArray } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateProductDto {
@@ -16,6 +16,32 @@ export class UpdateProductDto {
   @IsOptional()
   @IsObject()
   attributes?: Record<string, any>;
+
+  @ApiPropertyOptional({ description: 'Brand ID for the product' })
+  @IsOptional()
+  @IsUUID()
+  brandId?: string;
+
+  @ApiPropertyOptional({ description: 'URL slug for the product' })
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
+  @ApiPropertyOptional({ description: 'SEO Meta Title' })
+  @IsOptional()
+  @IsString()
+  metaTitle?: string;
+
+  @ApiPropertyOptional({ description: 'SEO Meta Description' })
+  @IsOptional()
+  @IsString()
+  metaDescription?: string;
+
+  @ApiPropertyOptional({ description: 'Product Image URLs', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  imageUrls?: string[];
 
   @ApiPropertyOptional({ description: 'Publication status' })
   @IsOptional()

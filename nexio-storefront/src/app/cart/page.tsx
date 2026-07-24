@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { formatIQD } from '@/lib/currency';
-import { ShoppingBag, Trash2, ArrowLeft, ShieldCheck, CreditCard } from 'lucide-react';
+import { ShoppingBag, Trash2, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
+import { updateCartItemQty, removeCartItem } from '@/lib/cart';
 
 export default function CartPage() {
   const [cart, setCart] = useState<any[]>([]);
@@ -16,6 +17,8 @@ export default function CartPage() {
       } catch {
         setCart([]);
       }
+    } else {
+      setCart([]);
     }
   };
 
@@ -23,19 +26,15 @@ export default function CartPage() {
     loadCart();
   }, []);
 
-  const updateQuantity = (id: string, newQty: number) => {
+  const handleUpdateQuantity = async (variantId: string, newQty: number) => {
     if (newQty < 1) return;
-    const updated = cart.map((item) => (item.id === id ? { ...item, quantity: newQty } : item));
-    setCart(updated);
-    localStorage.setItem('nexio_cart', JSON.stringify(updated));
-    window.dispatchEvent(new Event('storage'));
+    await updateCartItemQty(variantId, newQty);
+    loadCart();
   };
 
-  const removeItem = (id: string) => {
-    const updated = cart.filter((item) => item.id !== id);
-    setCart(updated);
-    localStorage.setItem('nexio_cart', JSON.stringify(updated));
-    window.dispatchEvent(new Event('storage'));
+  const handleRemoveItem = async (variantId: string) => {
+    await removeCartItem(variantId);
+    loadCart();
   };
 
   const subtotal = cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
@@ -67,7 +66,7 @@ export default function CartPage() {
           {/* Cart Items List */}
           <div className="lg:col-span-2 space-y-4">
             {cart.map((item) => (
-              <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-4">
+              <div key={item.variantId} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <div className="w-16 h-16 bg-slate-100 rounded-xl flex items-center justify-center text-2xl font-bold">
                     🛍️
@@ -81,16 +80,16 @@ export default function CartPage() {
                 <div className="flex items-center gap-6">
                   {/* Quantity Controls */}
                   <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden bg-slate-50 text-xs font-bold">
-                    <button onClick={() => updateQuantity(item.id, item.quantity - 1)} className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-200">
+                    <button onClick={() => handleUpdateQuantity(item.variantId, item.quantity - 1)} className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-200">
                       -
                     </button>
                     <span className="px-3 py-1.5 text-slate-900">{item.quantity}</span>
-                    <button onClick={() => updateQuantity(item.id, item.quantity + 1)} className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-200">
+                    <button onClick={() => handleUpdateQuantity(item.variantId, item.quantity + 1)} className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-200">
                       +
                     </button>
                   </div>
 
-                  <button onClick={() => removeItem(item.id)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">
+                  <button onClick={() => handleRemoveItem(item.variantId)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>

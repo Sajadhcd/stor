@@ -4,16 +4,16 @@ import { ConfigService } from '../config/config.service.js';
 import { requestContextStorage } from '../../common/context/request-context.js';
 
 /**
- * Tenant-scoped Prisma service that owns its own non-superuser (db_user)
+ * Tenant-scoped Prisma service that owns its own non-superuser (nexio_app)
  * connection pool completely separate from PrismaService.
  *
  * Architecture rationale:
- *   - PrismaService (postgres superuser) → bypasses RLS → used for auth lookups only
- *   - TenantPrismaService (db_user) → subject to RLS → used for all tenant data queries
+ *   - PrismaService (migration/admin role) → bypasses RLS → used for auth lookups only
+ *   - TenantPrismaService (nexio_app) → subject to RLS → used for tenant data queries
  *
  * PostgreSQL superusers are ALWAYS exempt from Row-Level Security, even when
  * FORCE ROW LEVEL SECURITY is set. The only way to enforce RLS is to connect
- * as a non-superuser role (db_user), then set app.current_tenant_id inside a
+ * as a non-superuser role (nexio_app), then set app.current_tenant_id inside a
  * transaction so the RLS policy can filter rows by tenant.
  *
  * Every call to exec() wraps the operation in a transaction that:
@@ -44,6 +44,12 @@ export class TenantPrismaService implements OnModuleInit, OnModuleDestroy {
     await this.client.$disconnect();
   }
 
+  async ping(): Promise<void> {
+    await this.exec(async (tx) => {
+      await tx.$queryRaw`SELECT 1`;
+    });
+  }
+
   /**
    * Execute a database operation inside a transaction with the tenant RLS context set.
    * The request context (tenantId, userId, etc.) is read from AsyncLocalStorage
@@ -52,24 +58,30 @@ export class TenantPrismaService implements OnModuleInit, OnModuleDestroy {
   async exec<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     const ctx = requestContextStorage.getStore();
 
-    return this.client.$transaction(async (tx) => {
-      if (ctx?.tenantId) {
-        await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${ctx.tenantId}, true)`;
-      }
+    return this.client.$transaction(
+      async (tx) => {
+        if (ctx?.tenantId) {
+          await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${ctx.tenantId}, true)`;
+        }
 
-      if (ctx?.userId) {
-        await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ctx.userId}, true)`;
-      }
+        if (ctx?.userId) {
+          await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ctx.userId}, true)`;
+        }
 
-      if (ctx?.clientIp) {
-        await tx.$executeRaw`SELECT set_config('app.current_client_ip', ${ctx.clientIp}, true)`;
-      }
+        if (ctx?.clientIp) {
+          await tx.$executeRaw`SELECT set_config('app.current_client_ip', ${ctx.clientIp}, true)`;
+        }
 
-      if (ctx?.userAgent) {
-        await tx.$executeRaw`SELECT set_config('app.current_user_agent', ${ctx.userAgent}, true)`;
-      }
+        if (ctx?.userAgent) {
+          await tx.$executeRaw`SELECT set_config('app.current_user_agent', ${ctx.userAgent}, true)`;
+        }
 
-      return fn(tx);
-    });
+        return fn(tx);
+      },
+      {
+        maxWait: 10_000,
+        timeout: 30_000,
+      },
+    );
   }
 }

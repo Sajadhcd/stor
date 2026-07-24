@@ -7,18 +7,54 @@ import { formatIQD } from '@/lib/currency';
 import { ShieldCheck, Truck, CreditCard, CheckCircle2, ArrowRight, Wallet } from 'lucide-react';
 
 const iraqiProvinces = [
-  'بغداد', 'البصرة', 'أربيل', 'النجف الأشرف', 'كربلاء المقدسة', 
-  'نينوى', 'السليمانية', 'دهوك', 'الأنبار', 'بابل', 
-  'ديالى', 'ذي قار', 'القادسية', 'كركوك', 'ميسان', 
-  'المثنى', 'صلاح الدين', 'واسط'
+  'بغداد',
+  'البصرة',
+  'أربيل',
+  'النجف الأشرف',
+  'كربلاء المقدسة',
+  'نينوى',
+  'السليمانية',
+  'دهوك',
+  'الأنبار',
+  'بابل',
+  'ديالى',
+  'ذي قار',
+  'القادسية',
+  'كركوك',
+  'ميسان',
+  'المثنى',
+  'صلاح الدين',
+  'واسط',
 ];
 
 const paymentMethods = [
-  { id: 'COD', name: 'الدفع نقداً عند الاستلام (COD)', icon: Truck, description: 'افحص طلبيتك وأدفع للمندوب عند باب البيت' },
-  { id: 'QI_CARD', name: 'بطاقة كي كارد (Qi Card)', icon: CreditCard, description: 'خصم مباشر أمن وسريع عبر بطاقة الكي كارد العراقية' },
-  { id: 'ZAIN_CASH', name: 'محفظة زين كاش (ZainCash)', icon: Wallet, description: 'دفع فوري عبر محفظة زين كاش العراقية' },
-  { id: 'ASIA_HAWALA', name: 'محفظة آسيا حوالة (AsiaHawala)', icon: Wallet, description: 'تحويل مباشر عبر آسيا حوالة' },
+  {
+    id: 'COD',
+    name: 'الدفع نقداً عند الاستلام (COD)',
+    icon: Truck,
+    description: 'افحص طلبيتك وأدفع للمندوب عند باب البيت',
+  },
+  {
+    id: 'QI_CARD',
+    name: 'بطاقة كي كارد (Qi Card)',
+    icon: CreditCard,
+    description: 'خصم مباشر أمن وسريع عبر بطاقة الكي كارد العراقية',
+  },
+  {
+    id: 'ZAIN_CASH',
+    name: 'محفظة زين كاش (ZainCash)',
+    icon: Wallet,
+    description: 'دفع فوري عبر محفظة زين كاش العراقية',
+  },
+  {
+    id: 'ASIA_HAWALA',
+    name: 'محفظة آسيا حوالة (AsiaHawala)',
+    icon: Wallet,
+    description: 'تحويل مباشر عبر آسيا حوالة',
+  },
 ];
+
+const storeId = process.env.NEXT_PUBLIC_STORE_ID || '11111111-1111-4111-8111-111111111111';
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -65,7 +101,7 @@ export default function CheckoutPage() {
       const cartRes = await apiFetch('/carts', {
         method: 'POST',
         body: JSON.stringify({
-          storeId: '11111111-1111-1111-1111-111111111111',
+          storeId,
           currency: 'IQD',
         }),
       });
@@ -154,8 +190,12 @@ export default function CheckoutPage() {
     <div className="space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">إتمام الطلب والشحن للمحافظة</h1>
-        <p className="text-sm text-slate-500 mt-1">أدخل عنوان الشحن الدقيق واختر طريقة الدفع المناسبة لك.</p>
+        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+          إتمام الطلب والشحن للمحافظة
+        </h1>
+        <p className="text-sm text-slate-500 mt-1">
+          أدخل عنوان الشحن الدقيق واختر طريقة الدفع المناسبة لك.
+        </p>
       </div>
 
       <form onSubmit={handleSubmitOrder} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -170,7 +210,9 @@ export default function CheckoutPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">الاسم الكامل للمستلم</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  الاسم الكامل للمستلم
+                </label>
                 <input
                   type="text"
                   required
@@ -182,7 +224,9 @@ export default function CheckoutPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">رقم الهاتف العراقي</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  رقم الهاتف العراقي
+                </label>
                 <input
                   type="text"
                   required
@@ -201,13 +245,17 @@ export default function CheckoutPage() {
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                 >
                   {iraqiProvinces.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">المدينة/المنطقة</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  المدينة/المنطقة
+                </label>
                 <input
                   type="text"
                   required
@@ -219,7 +267,9 @@ export default function CheckoutPage() {
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 mb-1">العنوان التفصيلي (أقرب نقطة دالة)</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  العنوان التفصيلي (أقرب نقطة دالة)
+                </label>
                 <input
                   type="text"
                   required
@@ -254,7 +304,9 @@ export default function CheckoutPage() {
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-xl ${isSelected ? 'bg-emerald-600 text-slate-950' : 'bg-slate-100 text-slate-600'}`}>
+                      <div
+                        className={`p-2 rounded-xl ${isSelected ? 'bg-emerald-600 text-slate-950' : 'bg-slate-100 text-slate-600'}`}
+                      >
                         <Icon className="w-5 h-5" />
                       </div>
                       <div>
@@ -272,7 +324,9 @@ export default function CheckoutPage() {
         {/* Order Summary & Submit Panel (1 col) */}
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6 flex flex-col justify-between h-fit sticky top-24">
           <div className="space-y-4">
-            <h3 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-3">الفاتورة النهائية (IQD)</h3>
+            <h3 className="text-base font-bold text-slate-900 border-b border-slate-100 pb-3">
+              الفاتورة النهائية (IQD)
+            </h3>
 
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between text-slate-600">

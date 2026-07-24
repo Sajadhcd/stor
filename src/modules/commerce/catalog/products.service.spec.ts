@@ -239,7 +239,15 @@ describe('ProductsService', () => {
           where: {
             storeId: 'store-123',
             isPublished: true,
-            OR: [{ variants: { some: { sku: { contains: 'SKU-001', mode: 'insensitive' } } } }],
+            OR: [
+              { titleTranslations: { path: ['ar'], string_contains: 'SKU-001' } },
+              { titleTranslations: { path: ['en'], string_contains: 'SKU-001' } },
+              { descriptionTranslations: { path: ['ar'], string_contains: 'SKU-001' } },
+              { descriptionTranslations: { path: ['en'], string_contains: 'SKU-001' } },
+              { slug: { contains: 'SKU-001', mode: 'insensitive' } },
+              { brand: { name: { contains: 'SKU-001', mode: 'insensitive' } } },
+              { variants: { some: { sku: { contains: 'SKU-001', mode: 'insensitive' } } } },
+            ],
             categories: { some: { categoryId: 'cat-1' } },
             deletedAt: null,
           },
@@ -300,7 +308,15 @@ describe('ProductsService', () => {
       expect(mockTx.product.findFirst).toHaveBeenCalledWith({
         where: { id: 'prod-123', deletedAt: null },
         include: {
-          variants: true,
+          brand: true,
+          images: {
+            orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          },
+          variants: {
+            include: {
+              stockLevels: true,
+            },
+          },
           categories: { include: { category: true } },
         },
       });

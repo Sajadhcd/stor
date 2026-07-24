@@ -13,6 +13,11 @@ export class ProductsService {
     private readonly cache: CacheService
   ) {}
 
+  private getTenantId(): string {
+    const ctx = requestContextStorage.getStore();
+    return ctx?.tenantId || 'global';
+  }
+
   async findAll(query?: ProductQueryDto) {
     const ctx = requestContextStorage.getStore();
     const tenantId = ctx?.tenantId || 'global';
@@ -30,24 +35,75 @@ export class ProductsService {
         where.isPublished = query.isPublished;
       }
       if (query?.search) {
+        const s = query.search.trim();
         where.OR = [
-          { variants: { some: { sku: { contains: query.search, mode: 'insensitive' } } } },
+          { titleTranslations: { path: ['ar'], string_contains: s } },
+          { titleTranslations: { path: ['en'], string_contains: s } },
+          { descriptionTranslations: { path: ['ar'], string_contains: s } },
+          { descriptionTranslations: { path: ['en'], string_contains: s } },
+          { slug: { contains: s, mode: 'insensitive' } },
+          { brand: { name: { contains: s, mode: 'insensitive' } } },
+          { variants: { some: { sku: { contains: s, mode: 'insensitive' } } } },
         ];
       }
       if (query?.categoryId) {
         where.categories = { some: { categoryId: query.categoryId } };
       }
+      if (query?.brandId) {
+        where.brandId = query.brandId;
+      }
+      if (query?.brandSlug) {
+        where.brand = { slug: query.brandSlug };
+      }
+
+      const variantWhere: Prisma.ProductVariantWhereInput = {};
+      if (query?.minPrice !== undefined || query?.maxPrice !== undefined) {
+        variantWhere.price = {};
+        if (query.minPrice !== undefined) variantWhere.price.gte = query.minPrice;
+        if (query.maxPrice !== undefined) variantWhere.price.lte = query.maxPrice;
+      }
+      if (query?.inStockOnly) {
+        variantWhere.stockLevels = {
+          some: {
+            quantityPhysical: { gt: 0 },
+          },
+        };
+      }
+      if (query?.attributes && Object.keys(query.attributes).length > 0) {
+        const attrConditions = Object.entries(query.attributes).map(([key, val]) => ({
+          attributes: { path: [key], equals: val },
+        }));
+        variantWhere.AND = attrConditions;
+      }
+
+      if (Object.keys(variantWhere).length > 0) {
+        where.variants = { some: variantWhere };
+      }
+
       where.deletedAt = null;
 
       const take = query?.take || 20;
       const skip = query?.skip || 0;
-      const orderBy: Prisma.ProductOrderByWithRelationInput = query?.sortBy ? { [query.sortBy]: query.sortOrder || 'desc' } : { createdAt: 'desc' };
+      let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
+      if (query?.sortBy === 'created_at' || query?.sortBy === 'createdAt') {
+        orderBy = { createdAt: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+      } else if (query?.sortBy && query.sortBy !== 'price_asc' && query.sortBy !== 'price_desc' && query.sortBy !== 'title') {
+        orderBy = { [query.sortBy]: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+      }
 
       const [items, total] = await Promise.all([
         tx.product.findMany({
           where,
           include: {
-            variants: true,
+            brand: true,
+            images: {
+              orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+            },
+            variants: {
+              include: {
+                stockLevels: true,
+              },
+            },
             categories: {
               include: {
                 category: true,
@@ -61,7 +117,36 @@ export class ProductsService {
         tx.product.count({ where }),
       ]);
 
-      return new PaginatedResponseDto(items, total, query?.page || 1, query?.limit || 20);
+      const mappedItems = items.map((product) => {
+        const mappedVariants = product.variants.map((v) => {
+          const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+          return {
+            ...v,
+            availableStock,
+          };
+        });
+        return {
+          ...product,
+          variants: mappedVariants,
+        };
+      });
+
+      let finalItems = mappedItems;
+      if (query?.sortBy === 'price_asc') {
+        finalItems = [...mappedItems].sort((a, b) => {
+          const minA = Math.min(...a.variants.map((v) => Number(v.price) || 0));
+          const minB = Math.min(...b.variants.map((v) => Number(v.price) || 0));
+          return minA - minB;
+        });
+      } else if (query?.sortBy === 'price_desc') {
+        finalItems = [...mappedItems].sort((a, b) => {
+          const maxA = Math.max(...a.variants.map((v) => Number(v.price) || 0));
+          const maxB = Math.max(...b.variants.map((v) => Number(v.price) || 0));
+          return maxB - maxA;
+        });
+      }
+
+      return new PaginatedResponseDto(finalItems, total, query?.page || 1, query?.limit || 20);
     });
 
     await this.cache.set(cacheKey, result, 300);
@@ -80,7 +165,15 @@ export class ProductsService {
       return tx.product.findFirst({
         where: { id, deletedAt: null },
         include: {
-          variants: true,
+          brand: true,
+          images: {
+            orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+          },
+          variants: {
+            include: {
+              stockLevels: true,
+            },
+          },
           categories: {
             include: {
               category: true,
@@ -93,12 +186,30 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    await this.cache.set(cacheKey, product, 300);
-    return product;
+    const mappedVariants = product.variants.map((v) => {
+      const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+      return {
+        ...v,
+        availableStock,
+      };
+    });
+
+    const mappedProduct = {
+      ...product,
+      variants: mappedVariants,
+    };
+
+    await this.cache.set(cacheKey, mappedProduct, 300);
+    return mappedProduct;
   }
 
   async create(data: {
     storeId?: string;
+    brandId?: string;
+    slug?: string;
+    metaTitle?: string;
+    metaDescription?: string;
+    imageUrls?: string[];
     titleTranslations: any;
     descriptionTranslations?: any;
     attributes?: any;
@@ -133,10 +244,23 @@ export class ProductsService {
         }
       }
 
+      if (data.brandId) {
+        const brand = await tx.brand.findFirst({
+          where: { id: data.brandId, tenantId: data.tenantId },
+        });
+        if (!brand) {
+          throw new NotFoundException(`Brand with ID ${data.brandId} not found`);
+        }
+      }
+
       const product = await tx.product.create({
         data: {
           tenantId: data.tenantId,
           storeId: storeId!,
+          brandId: data.brandId,
+          slug: data.slug,
+          metaTitle: data.metaTitle,
+          metaDescription: data.metaDescription,
           titleTranslations: data.titleTranslations,
           descriptionTranslations: data.descriptionTranslations,
           attributes: data.attributes,
@@ -144,8 +268,21 @@ export class ProductsService {
         },
       });
 
+      if (data.imageUrls && data.imageUrls.length > 0) {
+        for (let i = 0; i < data.imageUrls.length; i++) {
+          await tx.productImage.create({
+            data: {
+              tenantId: data.tenantId,
+              productId: product.id,
+              url: data.imageUrls[i],
+              isPrimary: i === 0,
+              sortOrder: i,
+            },
+          });
+        }
+      }
+
       if (data.categoryIds && data.categoryIds.length > 0) {
-        // Validate categories exist and belong to this tenant
         const validCategories = await tx.category.findMany({
           where: {
             id: { in: data.categoryIds },
@@ -179,6 +316,11 @@ export class ProductsService {
   async update(
     id: string,
     data: {
+      brandId?: string;
+      slug?: string;
+      metaTitle?: string;
+      metaDescription?: string;
+      imageUrls?: string[];
       titleTranslations?: any;
       descriptionTranslations?: any;
       attributes?: any;
@@ -187,13 +329,185 @@ export class ProductsService {
   ) {
     const product = await this.findById(id);
     const result = await this.db.exec(async (tx) => {
-      return tx.product.update({
+      if (data.brandId) {
+        const brand = await tx.brand.findFirst({
+          where: { id: data.brandId, tenantId: product.tenantId },
+        });
+        if (!brand) {
+          throw new NotFoundException(`Brand with ID ${data.brandId} not found`);
+        }
+      }
+
+      const updated = await tx.product.update({
         where: { id },
-        data,
+        data: {
+          brandId: data.brandId,
+          slug: data.slug,
+          metaTitle: data.metaTitle,
+          metaDescription: data.metaDescription,
+          titleTranslations: data.titleTranslations,
+          descriptionTranslations: data.descriptionTranslations,
+          attributes: data.attributes,
+          isPublished: data.isPublished,
+        },
       });
+
+      if (data.imageUrls && data.imageUrls.length > 0) {
+        await tx.productImage.deleteMany({ where: { productId: id } });
+        for (let i = 0; i < data.imageUrls.length; i++) {
+          await tx.productImage.create({
+            data: {
+              tenantId: product.tenantId,
+              productId: id,
+              url: data.imageUrls[i],
+              isPrimary: i === 0,
+              sortOrder: i,
+            },
+          });
+        }
+      }
+
+      return updated;
     });
 
     await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    return result;
+  }
+
+  async getProductImages(productId: string, tenantIdOverride?: string) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    await this.findById(productId);
+
+    return this.db.exec(async (tx) => {
+      return tx.productImage.findMany({
+        where: { productId, tenantId },
+        orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+      });
+    });
+  }
+
+  async addProductImage(
+    productId: string,
+    data: {
+      url: string;
+      altText?: string;
+      isPrimary?: boolean;
+      variantId?: string;
+      sortOrder?: number;
+    },
+    tenantIdOverride?: string
+  ) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    const product = await this.findById(productId);
+
+    const result = await this.db.exec(async (tx) => {
+      if (data.isPrimary) {
+        await tx.productImage.updateMany({
+          where: { productId, tenantId },
+          data: { isPrimary: false },
+        });
+      }
+
+      const existingCount = await tx.productImage.count({
+        where: { productId, tenantId },
+      });
+
+      const isPrimary = data.isPrimary ?? (existingCount === 0);
+
+      return tx.productImage.create({
+        data: {
+          tenantId,
+          productId,
+          variantId: data.variantId,
+          url: data.url,
+          altText: data.altText,
+          isPrimary,
+          sortOrder: data.sortOrder ?? existingCount,
+        },
+      });
+    });
+
+    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    return result;
+  }
+
+  async deleteProductImage(productId: string, imageId: string, tenantIdOverride?: string) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    await this.findById(productId);
+
+    const result = await this.db.exec(async (tx) => {
+      const image = await tx.productImage.findFirst({
+        where: { id: imageId, productId, tenantId },
+      });
+      if (!image) {
+        throw new NotFoundException(`Image ${imageId} not found under product ${productId}`);
+      }
+
+      await tx.productImage.delete({
+        where: { id: imageId },
+      });
+
+      if (image.isPrimary) {
+        const nextImage = await tx.productImage.findFirst({
+          where: { productId, tenantId },
+          orderBy: { sortOrder: 'asc' },
+        });
+        if (nextImage) {
+          await tx.productImage.update({
+            where: { id: nextImage.id },
+            data: { isPrimary: true },
+          });
+        }
+      }
+
+      return { success: true, deletedId: imageId };
+    });
+
+    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    return result;
+  }
+
+  async updateProductImage(
+    productId: string,
+    imageId: string,
+    data: {
+      variantId?: string | null;
+      isPrimary?: boolean;
+      sortOrder?: number;
+      altText?: string;
+    },
+    tenantIdOverride?: string
+  ) {
+    const tenantId = tenantIdOverride || this.getTenantId();
+    await this.findById(productId);
+
+    const result = await this.db.exec(async (tx) => {
+      const image = await tx.productImage.findFirst({
+        where: { id: imageId, productId, tenantId },
+      });
+      if (!image) {
+        throw new NotFoundException(`Image ${imageId} not found under product ${productId}`);
+      }
+
+      if (data.isPrimary) {
+        await tx.productImage.updateMany({
+          where: { productId, tenantId },
+          data: { isPrimary: false },
+        });
+      }
+
+      return tx.productImage.update({
+        where: { id: imageId },
+        data: {
+          variantId: data.variantId === null ? null : data.variantId,
+          isPrimary: data.isPrimary,
+          sortOrder: data.sortOrder,
+          altText: data.altText,
+        },
+      });
+    });
+
+    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
     return result;
   }
 
@@ -222,6 +536,7 @@ export class ProductsService {
       price: number;
       costPrice?: number;
       weight?: number;
+      attributes?: Record<string, any>;
       tenantId: string;
     }
   ) {
@@ -254,6 +569,7 @@ export class ProductsService {
           price: data.price,
           costPrice: data.costPrice,
           weight: data.weight,
+          attributes: data.attributes ? (data.attributes as any) : undefined,
         },
       });
     });
@@ -271,6 +587,7 @@ export class ProductsService {
       price?: number;
       costPrice?: number;
       weight?: number;
+      attributes?: Record<string, any>;
       tenantId: string;
     }
   ) {
@@ -310,6 +627,7 @@ export class ProductsService {
           price: data.price,
           costPrice: data.costPrice,
           weight: data.weight,
+          attributes: data.attributes !== undefined ? (data.attributes as any) : undefined,
         },
       });
     });
@@ -349,6 +667,7 @@ export class ProductsService {
   ) {
     const product = await this.findById(productId);
 
+    const optionKeys = Object.keys(data.options);
     const optionValues = Object.values(data.options);
     if (optionValues.length === 0) {
       throw new BadRequestException('No options provided for variant matrix generation');
@@ -377,12 +696,18 @@ export class ProductsService {
           continue;
         }
 
+        const attributes: Record<string, string> = {};
+        optionKeys.forEach((key, index) => {
+          attributes[key] = combo[index];
+        });
+
         const variant = await tx.productVariant.create({
           data: {
             tenantId: data.tenantId,
             productId,
             sku: variantSku,
             price: data.basePrice,
+            attributes,
           },
         });
         createdVariants.push(variant);

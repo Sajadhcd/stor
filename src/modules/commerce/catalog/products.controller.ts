@@ -7,6 +7,7 @@ import { CreateVariantDto } from './dto/create-variant.dto.js';
 import { UpdateVariantDto } from './dto/update-variant.dto.js';
 import { GenerateMatrixDto } from './dto/generate-matrix.dto.js';
 import { ProductQueryDto } from './dto/product-query.dto.js';
+import { AddProductImageDto } from './dto/add-product-image.dto.js';
 import { AuthGuard } from '../../../security/guards/auth.guard.js';
 import { PermissionsGuard } from '../../../security/guards/permissions.guard.js';
 import { RequirePermissions } from '../../../security/decorators/permissions.decorator.js';
@@ -67,6 +68,61 @@ export class ProductsController {
   @Delete(':id')
   async remove(@Param('id') id: string) {
     return this.productsService.softDelete(id);
+  }
+
+  // Product Images endpoints
+
+  @ApiOperation({ summary: 'List images for a product' })
+  @ApiResponse({ status: 200, description: 'Product images list' })
+  @Get(':id/images')
+  async getProductImages(@Param('id') productId: string) {
+    return this.productsService.getProductImages(productId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @ApiOperation({ summary: 'Add an image to a product' })
+  @ApiResponse({ status: 201, description: 'Image added successfully' })
+  @RequirePermissions('products:update')
+  @Post(':id/images')
+  async addProductImage(
+    @Param('id') productId: string,
+    @Body() dto: AddProductImageDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const tenantId = req.user.tenantId;
+    return this.productsService.addProductImage(productId, dto, tenantId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @ApiOperation({ summary: 'Delete a product image' })
+  @ApiResponse({ status: 200, description: 'Image deleted successfully' })
+  @RequirePermissions('products:update')
+  @Delete(':id/images/:imageId')
+  async removeProductImage(
+    @Param('id') productId: string,
+    @Param('imageId') imageId: string,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const tenantId = req.user.tenantId;
+    return this.productsService.deleteProductImage(productId, imageId, tenantId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard, PermissionsGuard)
+  @ApiOperation({ summary: 'Update product image properties' })
+  @ApiResponse({ status: 200, description: 'Image updated successfully' })
+  @RequirePermissions('products:update')
+  @Patch(':id/images/:imageId')
+  async updateProductImage(
+    @Param('id') productId: string,
+    @Param('imageId') imageId: string,
+    @Body() dto: { variantId?: string | null; isPrimary?: boolean; sortOrder?: number; altText?: string },
+    @Request() req: AuthenticatedRequest,
+  ) {
+    const tenantId = req.user.tenantId;
+    return this.productsService.updateProductImage(productId, imageId, dto, tenantId);
   }
 
   // Variant management endpoints
