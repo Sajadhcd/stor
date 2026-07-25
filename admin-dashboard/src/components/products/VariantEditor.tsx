@@ -10,7 +10,13 @@ interface Variant {
   barcode?: string;
   price: number | string;
   costPrice?: number | string;
+  priceOverride?: number | string;
+  compareAtPrice?: number | string;
   weight?: number | string;
+  variantName?: string;
+  isActive?: boolean;
+  position?: number;
+  dimensions?: any;
   attributes?: Record<string, any>;
   stockLevels?: any[];
 }
@@ -35,7 +41,13 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
   const [barcode, setBarcode] = useState('');
   const [price, setPrice] = useState<number | string>('');
   const [costPrice, setCostPrice] = useState<number | string>('');
+  const [priceOverride, setPriceOverride] = useState<number | string>('');
+  const [compareAtPrice, setCompareAtPrice] = useState<number | string>('');
   const [weight, setWeight] = useState<number | string>('');
+  const [variantName, setVariantName] = useState('');
+  const [isActive, setIsActive] = useState(true);
+  const [position, setPosition] = useState<number>(0);
+  const [dimensions, setDimensions] = useState('');
   const [attributes, setAttributes] = useState<{ key: string; val: string }[]>([]);
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -46,7 +58,13 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
       setBarcode(variant.barcode || '');
       setPrice(variant.price || '');
       setCostPrice(variant.costPrice || '');
+      setPriceOverride(variant.priceOverride || '');
+      setCompareAtPrice(variant.compareAtPrice || '');
       setWeight(variant.weight || '');
+      setVariantName(variant.variantName || '');
+      setIsActive(variant.isActive ?? true);
+      setPosition(variant.position ?? 0);
+      setDimensions(variant.dimensions ? JSON.stringify(variant.dimensions, null, 2) : '');
       
       const attrs = Object.entries(variant.attributes || {}).map(([key, val]) => ({
         key,
@@ -64,7 +82,13 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
       setBarcode('');
       setPrice('');
       setCostPrice('');
+      setPriceOverride('');
+      setCompareAtPrice('');
       setWeight('');
+      setVariantName('');
+      setIsActive(true);
+      setPosition(0);
+      setDimensions('{\n  "length": 0,\n  "width": 0,\n  "height": 0,\n  "unit": "cm"\n}');
       setAttributes([
         { key: 'color', val: '' },
         { key: 'size', val: '' }
@@ -108,6 +132,16 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
       return;
     }
 
+    let parsedDimensions = null;
+    if (dimensions.trim()) {
+      try {
+        parsedDimensions = JSON.parse(dimensions);
+      } catch {
+        alert('الرجاء إدخال أبعاد صحيحة بصيغة JSON');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       // Build attributes object
@@ -123,7 +157,13 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
         barcode: barcode.trim() || undefined,
         price: Number(price),
         costPrice: costPrice !== '' ? Number(costPrice) : undefined,
+        priceOverride: priceOverride !== '' ? Number(priceOverride) : null,
+        compareAtPrice: compareAtPrice !== '' ? Number(compareAtPrice) : null,
         weight: weight !== '' ? Number(weight) : undefined,
+        variantName: variantName.trim() || undefined,
+        isActive,
+        position: Number(position),
+        dimensions: parsedDimensions,
         attributes: attrObj
       };
 
@@ -189,6 +229,30 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
         </div>
 
         <form onSubmit={handleSave} className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+          {/* Variant Name & Position */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xxs font-bold text-slate-500 mb-1">اسم المتغير (مثال: أحمر / XL)</label>
+              <input
+                type="text"
+                value={variantName}
+                onChange={e => setVariantName(e.target.value)}
+                placeholder="الاسم العرضي للمتغير"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block text-xxs font-bold text-slate-500 mb-1">ترتيب العرض (Position)</label>
+              <input
+                type="number"
+                min="0"
+                value={position}
+                onChange={e => setPosition(Number(e.target.value))}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+              />
+            </div>
+          </div>
+
           {/* SKU & Barcode */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -214,10 +278,10 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
             </div>
           </div>
 
-          {/* Pricing & Weight */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Pricing & Overrides */}
+          <div className="grid grid-cols-4 gap-3">
             <div>
-              <label className="block text-xxs font-bold text-slate-500 mb-1">سعر البيع</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">سعر البيع الأساسي</label>
               <input
                 type="number"
                 required
@@ -225,20 +289,46 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
                 value={price}
                 onChange={e => setPrice(e.target.value)}
                 placeholder="السعر"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
               />
             </div>
             <div>
-              <label className="block text-xxs font-bold text-slate-500 mb-1">التكلفة</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">سعر التخفيض (Override)</label>
+              <input
+                type="number"
+                min="0"
+                value={priceOverride}
+                onChange={e => setPriceOverride(e.target.value)}
+                placeholder="تخفيض"
+                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">السعر الأصلي (Compare-At)</label>
+              <input
+                type="number"
+                min="0"
+                value={compareAtPrice}
+                onChange={e => setCompareAtPrice(e.target.value)}
+                placeholder="الأصلي"
+                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">التكلفة (Cost)</label>
               <input
                 type="number"
                 min="0"
                 value={costPrice}
                 onChange={e => setCostPrice(e.target.value)}
                 placeholder="التكلفة"
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
               />
             </div>
+          </div>
+
+          {/* Weight & Active Checkbox */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xxs font-bold text-slate-500 mb-1">الوزن (كجم)</label>
               <input
@@ -251,6 +341,30 @@ export function VariantEditor({ productId, variant, productImages, onClose, onSa
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
               />
             </div>
+            <div className="flex items-end pb-2">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  onChange={e => setIsActive(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded-md focus:ring-indigo-500"
+                />
+                <span className="text-xs font-bold text-slate-700">المتغير نشط ومعروض للبيع</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Dimensions JSON Editor */}
+          <div>
+            <label className="block text-xxs font-bold text-slate-500 mb-1">الأبعاد بصيغة JSON (Dimensions)</label>
+            <textarea
+              rows={4}
+              value={dimensions}
+              onChange={e => setDimensions(e.target.value)}
+              placeholder='{ "length": 0, "width": 0, "height": 0, "unit": "cm" }'
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-left focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-800"
+              dir="ltr"
+            />
           </div>
 
           {/* Attributes Builder */}

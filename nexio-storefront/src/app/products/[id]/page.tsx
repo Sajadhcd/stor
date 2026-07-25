@@ -27,6 +27,9 @@ export default function ProductDetailPage() {
     async function loadProduct() {
       try {
         const data = await apiFetch(`/products/${id}`);
+        if (data && data.variants) {
+          data.variants = data.variants.filter((v: any) => v.isActive !== false);
+        }
         setProduct(data);
 
         // Set primary image
@@ -130,10 +133,16 @@ export default function ProductDetailPage() {
 
   // Calculate dynamic price based on selected variant
   const currentPrice = selectedVariant
-    ? Number(selectedVariant.priceOverride || selectedVariant.price)
+    ? Number(selectedVariant.priceOverride ?? selectedVariant.price)
     : product.variants && product.variants.length > 0
-      ? Math.min(...product.variants.map((v: any) => Number(v.priceOverride || v.price)))
+      ? Math.min(...product.variants.map((v: any) => Number(v.priceOverride ?? v.price)))
       : 75000;
+
+  const compareAtPrice = selectedVariant
+    ? (selectedVariant.compareAtPrice ? Number(selectedVariant.compareAtPrice) : null)
+    : product.variants && product.variants.length > 0
+      ? Math.min(...product.variants.filter((v: any) => v.compareAtPrice).map((v: any) => Number(v.compareAtPrice)))
+      : null;
 
   // Calculate variant stock
   const availableStock = selectedVariant ? (selectedVariant.availableStock ?? 0) : 0;
@@ -252,7 +261,14 @@ export default function ProductDetailPage() {
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-baseline justify-between">
               <div>
                 <span className="text-xxs font-bold text-slate-400 block">السعر الإجمالي بالدينار العراقي:</span>
-                <span className="text-2xl font-black text-emerald-600 block mt-1">{formatIQD(currentPrice * quantity)}</span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-2xl font-black text-emerald-600 block">{formatIQD(currentPrice * quantity)}</span>
+                  {compareAtPrice && compareAtPrice > currentPrice && (
+                    <span className="text-xs font-bold text-slate-400 line-through">
+                      {formatIQD(compareAtPrice * quantity)}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div>

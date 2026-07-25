@@ -122,7 +122,9 @@ export function ProductVariants({ productId }: ProductVariantsProps) {
                     <tr key={v.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="py-3 pr-4">
                         <div>
-                          <span className="font-bold text-slate-950 block">{v.sku}</span>
+                          <span className="font-bold text-slate-950 block">
+                            {v.variantName ? `${v.variantName} (${v.sku})` : v.sku}
+                          </span>
                           {/* Attribute Badges */}
                           {v.attributes && Object.keys(v.attributes).length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -142,19 +144,43 @@ export function ProductVariants({ productId }: ProductVariantsProps) {
                         {v.barcode || '—'}
                       </td>
                       <td className="py-3">
-                        <div className="text-slate-900 font-bold">{Number(v.price).toFixed(2)} ر.س</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {v.priceOverride ? (
+                            <>
+                              <span className="text-slate-900 font-bold">{Number(v.priceOverride).toFixed(2)} ر.س</span>
+                              <span className="text-slate-400 line-through text-xxs font-normal">
+                                {Number(v.compareAtPrice || v.price).toFixed(2)} ر.س
+                              </span>
+                            </>
+                          ) : v.compareAtPrice ? (
+                            <>
+                              <span className="text-slate-900 font-bold">{Number(v.price).toFixed(2)} ر.س</span>
+                              <span className="text-slate-400 line-through text-xxs font-normal">
+                                {Number(v.compareAtPrice).toFixed(2)} ر.س
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-slate-900 font-bold">{Number(v.price).toFixed(2)} ر.س</span>
+                          )}
+                        </div>
                         {v.costPrice && (
                           <div className="text-xxs text-slate-400 font-normal">التكلفة: {Number(v.costPrice).toFixed(2)} ر.س</div>
                         )}
                       </td>
                       <td className="py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xxs font-bold ${
-                          available > 0 
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/40' 
-                            : 'bg-rose-50 text-rose-700 border border-rose-200/40'
-                        }`}>
-                          {available > 0 ? `متوفر (${available})` : 'نفذت الكمية'}
-                        </span>
+                        {!v.isActive ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-xxs font-bold bg-slate-100 text-slate-500 border border-slate-200/40">
+                            غير نشط
+                          </span>
+                        ) : (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-xxs font-bold ${
+                            available > 0 
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/40' 
+                              : 'bg-rose-50 text-rose-700 border border-rose-200/40'
+                          }`}>
+                            {available > 0 ? `متوفر (${available})` : 'نفذت الكمية'}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3">
                         <div className="flex gap-1">

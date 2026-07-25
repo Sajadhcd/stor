@@ -424,7 +424,11 @@ describe('CartService', () => {
       expect(result).toBeDefined();
       expect(mockTx.cartItem.update).toHaveBeenCalledWith({
         where: { id: 'g-item-1' },
-        data: { cartId: 'cust-cart-1' },
+        data: { 
+          cartId: 'cust-cart-1',
+          unitPrice: 50,
+          subtotal: 100,
+        },
       });
       expect(mockTx.cart.update).toHaveBeenCalledWith({
         where: { id: 'guest-cart-1' },

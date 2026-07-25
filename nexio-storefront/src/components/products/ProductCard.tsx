@@ -10,16 +10,22 @@ export function ProductCard({ product }: { product: any }) {
     ? product.titleTranslations.ar || product.titleTranslations.en || 'منتج متميز'
     : 'منتج متميز';
 
+  // Filter active variants
+  const variants = (product.variants || []).filter((v: any) => v.isActive !== false);
+
   // Display the lowest valid variant price
-  const price = product.variants && product.variants.length > 0
-    ? Math.min(...product.variants.map((v: any) => Number(v.priceOverride || v.price || 0)))
+  const price = variants.length > 0
+    ? Math.min(...variants.map((v: any) => Number(v.priceOverride ?? v.price ?? 0)))
     : 75000;
+
+  const originalPrice = variants.length > 0
+    ? Math.max(...variants.filter((v: any) => v.compareAtPrice).map((v: any) => Number(v.compareAtPrice)))
+    : 0;
 
   const primaryImage = product.images?.find((img: any) => img.isPrimary)?.url || product.images?.[0]?.url;
   const brandName = product.brand?.name;
 
   // Determine variant states
-  const variants = product.variants || [];
   const totalAvailableStock = variants.reduce((sum: number, v: any) => sum + (v.availableStock || 0), 0);
   const isAllOutOfStock = variants.length === 0 || totalAvailableStock <= 0;
   const hasMultipleVariants = variants.length > 1;
@@ -31,7 +37,7 @@ export function ProductCard({ product }: { product: any }) {
     if (variants.length === 0) return;
 
     const variant = variants[0];
-    const itemPrice = Number(variant.priceOverride || variant.price || 75000);
+    const itemPrice = Number(variant.priceOverride ?? variant.price ?? 75000);
 
     await addCartItem(
       variant.id,
@@ -91,7 +97,14 @@ export function ProductCard({ product }: { product: any }) {
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
           <div>
             <span className="text-xs text-slate-400 block font-medium">السعر بالدينار:</span>
-            <span className="text-base font-black text-emerald-600 block">{formatIQD(price)}</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-base font-black text-emerald-600 block">{formatIQD(price)}</span>
+              {originalPrice > price && (
+                <span className="text-xxs font-bold text-slate-400 line-through">
+                  {formatIQD(originalPrice)}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Conditional Cart Button / Action */}
