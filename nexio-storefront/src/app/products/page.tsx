@@ -4,14 +4,41 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 import { ProductCard } from '@/components/products/ProductCard';
-import { Search, Filter, RefreshCw, X, ChevronDown, Check } from 'lucide-react';
+import { Search, Filter, RefreshCw, Check } from 'lucide-react';
+
+// ─── Type helpers ─────────────────────────────────────────────────────────────
+
+interface CategoryNode {
+  id: string;
+  nameTranslations: Record<string, string>;
+  slug: string;
+  isActive: boolean;
+  position: number;
+  productCount: number;
+  children: CategoryNode[];
+}
+
+/** Flatten a nested category tree into a single sorted list for the sidebar. */
+function flattenCategories(nodes: CategoryNode[]): CategoryNode[] {
+  const result: CategoryNode[] = [];
+  const walk = (list: CategoryNode[]) => {
+    for (const node of list) {
+      result.push(node);
+      if (node.children?.length) walk(node.children);
+    }
+  };
+  walk(nodes);
+  return result;
+}
+
+// ─── Main listing component ──────────────────────────────────────────────────
 
 function ProductsListingContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Dynamic URL Query parameters as single source of truth
+  // URL Query parameters as single source of truth
   const search = searchParams.get('search') || '';
   const selectedBrandSlug = searchParams.get('brandSlug') || '';
   const selectedCategoryId = searchParams.get('categoryId') || '';
@@ -27,21 +54,16 @@ function ProductsListingContent() {
 
   const [products, setProducts] = useState<any[]>([]);
   const [brands, setBrands] = useState<any[]>([]);
+  const [categories, setCategories] = useState<CategoryNode[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [loading, setLoading] = useState(true);
 
-  // Hardcoded category presets (matching seeded data)
-  const categoryPresets = [
-    { id: 'a450193d-e269-4287-9f78-9319c854a14d', nameAr: 'ملابس', nameEn: 'Apparel' },
-    { id: 'b07150cb-0894-4b3d-bda3-99de2899387a', nameAr: 'أحذية', nameEn: 'Footwear' },
-    { id: 'c450193d-e269-4287-9f78-9319c854a14d', nameAr: 'قرطاسية', nameEn: 'Stationery' }
-  ];
-
-  // Sync inputs with URL params on navigation (e.g. back/forward button or reset)
+  // Sync inputs with URL params on navigation
   useEffect(() => { setSearchInput(search); }, [search]);
   useEffect(() => { setMinPriceInput(minPrice); }, [minPrice]);
   useEffect(() => { setMaxPriceInput(maxPrice); }, [maxPrice]);
 
-  // Helper to construct query strings and push URL updates immediately
+  /** Push URL updates without full navigation. */
   const updateUrlParams = (newParams: Record<string, string | null>) => {
     const currentSearch = typeof window !== 'undefined' ? window.location.search : searchParams.toString();
     const params = new URLSearchParams(currentSearch);
@@ -59,20 +81,26 @@ function ProductsListingContent() {
     router.push(newUrl);
   };
 
-  // Fetch brands on mount
+  // Fetch brands
   useEffect(() => {
-    async function loadBrands() {
-      try {
-        const result = await apiFetch('/brands');
-        setBrands(result || []);
-      } catch (err) {
-        console.error('Failed to load brands:', err);
-      }
-    }
-    loadBrands();
+    apiFetch('/brands')
+      .then((result) => setBrands(result || []))
+      .catch((err) => console.error('Failed to load brands:', err));
   }, []);
 
-  // Fetch products whenever filters update (as driven by the URL)
+  // Fetch categories dynamically from API
+  useEffect(() => {
+    setCategoriesLoading(true);
+    apiFetch('/categories')
+      .then((tree: CategoryNode[]) => setCategories(flattenCategories(tree || [])))
+      .catch((err) => {
+        console.error('Failed to load categories:', err);
+        setCategories([]);
+      })
+      .finally(() => setCategoriesLoading(false));
+  }, []);
+
+  // Fetch products whenever filters change
   useEffect(() => {
     async function loadProducts() {
       setLoading(true);
@@ -85,7 +113,6 @@ function ProductsListingContent() {
         if (maxPrice) params.append('maxPrice', maxPrice);
         if (inStockOnly) params.append('inStockOnly', 'true');
 
-        // Map sort choices
         if (sortBy === 'price_asc') {
           params.append('sortBy', 'price_asc');
         } else if (sortBy === 'price_desc') {
@@ -96,7 +123,6 @@ function ProductsListingContent() {
         }
 
         const result = await apiFetch(`/products?${params.toString()}`);
-        console.log('Products API Response:', result);
         setProducts(result.data ?? []);
       } catch (err) {
         console.error('Failed to load products:', err);
@@ -105,7 +131,6 @@ function ProductsListingContent() {
         setLoading(false);
       }
     }
-
     loadProducts();
   }, [search, selectedBrandSlug, selectedCategoryId, minPrice, maxPrice, inStockOnly, sortBy]);
 
@@ -147,38 +172,53 @@ function ProductsListingContent() {
               </button>
             </div>
 
-            {/* Category Filter */}
+            {/* Category Filter — Dynamic from API */}
             <div className="space-y-2">
               <span className="block text-xxs font-black text-slate-400">التصنيفات</span>
-              <div className="flex flex-col gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => updateUrlParams({ categoryId: '' })}
-                  className={`w-full py-2 px-3.5 rounded-xl text-xs font-bold text-right transition-all flex items-center justify-between ${
-                    selectedCategoryId === ''
-                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                      : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
-                  }`}
-                >
-                  <span>كافة التصنيفات</span>
-                  {selectedCategoryId === '' && <Check className="w-3.5 h-3.5" />}
-                </button>
-                {categoryPresets.map((cat) => (
+              {categoriesLoading ? (
+                <div className="flex items-center gap-2 py-2 text-xs text-slate-400">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  <span>جاري تحميل التصنيفات...</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
                   <button
-                    key={cat.id}
                     type="button"
-                    onClick={() => updateUrlParams({ categoryId: cat.id })}
+                    onClick={() => updateUrlParams({ categoryId: '' })}
                     className={`w-full py-2 px-3.5 rounded-xl text-xs font-bold text-right transition-all flex items-center justify-between ${
-                      selectedCategoryId === cat.id
+                      selectedCategoryId === ''
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
                         : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
                     }`}
                   >
-                    <span>{cat.nameAr}</span>
-                    {selectedCategoryId === cat.id && <Check className="w-3.5 h-3.5" />}
+                    <span>كافة التصنيفات</span>
+                    {selectedCategoryId === '' && <Check className="w-3.5 h-3.5" />}
                   </button>
-                ))}
-              </div>
+
+                  {categories.length === 0 ? (
+                    <p className="text-xs text-slate-400 px-2 py-1">لا توجد تصنيفات متاحة</p>
+                  ) : (
+                    categories.map((cat) => {
+                      const name = cat.nameTranslations?.ar || cat.nameTranslations?.en || cat.slug;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => updateUrlParams({ categoryId: cat.id })}
+                          className={`w-full py-2 px-3.5 rounded-xl text-xs font-bold text-right transition-all flex items-center justify-between ${
+                            selectedCategoryId === cat.id
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                              : 'bg-slate-50 text-slate-600 border border-transparent hover:bg-slate-100'
+                          }`}
+                        >
+                          <span>{name}</span>
+                          {selectedCategoryId === cat.id && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Brand Filter */}
@@ -207,9 +247,8 @@ function ProductsListingContent() {
                   placeholder="من"
                   value={minPriceInput}
                   onChange={(e) => {
-                    const val = e.target.value;
-                    setMinPriceInput(val);
-                    updateUrlParams({ minPrice: val });
+                    setMinPriceInput(e.target.value);
+                    updateUrlParams({ minPrice: e.target.value });
                   }}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 text-slate-800 text-center"
                 />
@@ -218,9 +257,8 @@ function ProductsListingContent() {
                   placeholder="إلى"
                   value={maxPriceInput}
                   onChange={(e) => {
-                    const val = e.target.value;
-                    setMaxPriceInput(val);
-                    updateUrlParams({ maxPrice: val });
+                    setMaxPriceInput(e.target.value);
+                    updateUrlParams({ maxPrice: e.target.value });
                   }}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 text-slate-800 text-center"
                 />
@@ -247,15 +285,13 @@ function ProductsListingContent() {
         <div className="lg:col-span-3 space-y-6">
           {/* Toolbar */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
-            {/* Search Input */}
             <div className="relative w-full sm:max-w-xs">
               <input
                 type="text"
                 value={searchInput}
                 onChange={(e) => {
-                  const val = e.target.value;
-                  setSearchInput(val);
-                  updateUrlParams({ search: val });
+                  setSearchInput(e.target.value);
+                  updateUrlParams({ search: e.target.value });
                 }}
                 placeholder="ابحث عن اسم المنتج، SKU، ماركة..."
                 className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
@@ -263,7 +299,6 @@ function ProductsListingContent() {
               <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
             </div>
 
-            {/* Sort by */}
             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
               <span className="text-xxs font-bold text-slate-400">ترتيب بحسب:</span>
               <select

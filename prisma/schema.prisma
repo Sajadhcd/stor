@@ -215,12 +215,19 @@ model Warehouse {
 }
 
 model Category {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId         String   @map("tenant_id") @db.Uuid
-  parentId         String?  @map("parent_id") @db.Uuid
-  nameTranslations Json     @map("name_translations")
-  slug             String   @db.VarChar(100)
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId                String   @map("tenant_id") @db.Uuid
+  parentId                String?  @map("parent_id") @db.Uuid
+  nameTranslations        Json     @map("name_translations")
+  descriptionTranslations Json?    @map("description_translations")
+  slug                    String   @db.VarChar(100)
+  imageUrl                String?  @map("image_url") @db.VarChar(1024)
+  metaTitle               String?  @map("meta_title") @db.VarChar(255)
+  metaDescription         String?  @map("meta_description") @db.VarChar(500)
+  isActive                Boolean  @default(true) @map("is_active")
+  position                Int      @default(0)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt               DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
@@ -230,6 +237,7 @@ model Category {
 
   @@unique([tenantId, slug])
   @@index([tenantId, parentId])
+  @@index([tenantId, isActive, position])
   @@map("categories")
 }
 
