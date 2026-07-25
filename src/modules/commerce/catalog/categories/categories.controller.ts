@@ -16,6 +16,7 @@ import { Request as ExpressRequest } from 'express';
 import { CategoriesService } from './categories.service.js';
 import { CreateCategoryDto } from './dto/create-category.dto.js';
 import { UpdateCategoryDto } from './dto/update-category.dto.js';
+import { AttributeDefinitionsService } from '../attribute-definitions/attribute-definitions.service.js';
 import { AuthGuard } from '../../../../security/guards/auth.guard.js';
 import { PermissionsGuard } from '../../../../security/guards/permissions.guard.js';
 import { RequirePermissions } from '../../../../security/decorators/permissions.decorator.js';
@@ -25,6 +26,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiQuery,
+  ApiParam,
 } from '@nestjs/swagger';
 
 type AuthenticatedRequest = ExpressRequest & { user: { tenantId: string } };
@@ -32,7 +34,10 @@ type AuthenticatedRequest = ExpressRequest & { user: { tenantId: string } };
 @ApiTags('Categories')
 @Controller('categories')
 export class CategoriesController {
-  constructor(private readonly categoriesService: CategoriesService) {}
+  constructor(
+    private readonly categoriesService: CategoriesService,
+    private readonly attributeDefinitionsService: AttributeDefinitionsService,
+  ) {}
 
   // ─── Public Endpoints ──────────────────────────────────────────────────────
 
@@ -73,8 +78,7 @@ export class CategoriesController {
     return this.categoriesService.findById(id);
   }
 
-  @ApiOperation({
-    summary: 'List products in a category (paginated)',
+  @ApiOperation({ summary: 'List products in a category (paginated)',
     description: 'Returns published products belonging to the given category ID.',
   })
   @ApiResponse({ status: 200, description: 'Paginated product list' })
@@ -93,6 +97,21 @@ export class CategoriesController {
       limit: limit ? parseInt(limit, 10) : 20,
       isPublished: isPublished === undefined ? true : isPublished === 'true',
     });
+  }
+
+  @ApiOperation({
+    summary: 'List attribute definitions for a category',
+    description:
+      'Returns all attribute definitions that apply to the given category, ' +
+      'including global definitions (categoryId = null) merged with category-specific ones. ' +
+      'Results are sorted by position ASC.',
+  })
+  @ApiResponse({ status: 200, description: 'Attribute definitions for category' })
+  @ApiResponse({ status: 404, description: 'Category not found' })
+  @ApiParam({ name: 'id', description: 'UUID of the category' })
+  @Get(':id/attribute-definitions')
+  async findAttributeDefinitions(@Param('id') id: string) {
+    return this.attributeDefinitionsService.findForCategory(id);
   }
 
   // ─── Authenticated / Admin Endpoints ───────────────────────────────────────

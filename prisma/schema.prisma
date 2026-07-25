@@ -120,6 +120,7 @@ model Tenant {
   journalEntries       JournalEntry[]
   brands               Brand[]
   productImages        ProductImage[]
+  attributeDefinitions AttributeDefinition[]
 
   @@map("tenants")
 }
@@ -232,8 +233,9 @@ model Category {
   tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   parent Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
 
-  children Category[]             @relation("CategoryHierarchy")
-  products CategoriesOnProducts[]
+  children             Category[]             @relation("CategoryHierarchy")
+  products             CategoriesOnProducts[]
+  attributeDefinitions AttributeDefinition[]
 
   @@unique([tenantId, slug])
   @@index([tenantId, parentId])
@@ -870,4 +872,36 @@ model JournalLine {
   @@map("journal_lines")
 }
 
+// ---------------------------------------------------------------------------
+// Attribute Definition System — Phase B1
+// ---------------------------------------------------------------------------
 
+enum AttributeType {
+  select
+  text
+  color
+  number
+  boolean
+}
+
+model AttributeDefinition {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId          String        @map("tenant_id") @db.Uuid
+  categoryId        String?       @map("category_id") @db.Uuid
+  name              String        @db.VarChar(100)
+  labelTranslations Json          @map("label_translations")
+  type              AttributeType @default(select)
+  options           Json?
+  isRequired        Boolean       @default(false) @map("is_required")
+  position          Int           @default(0)
+  isVariantAxis     Boolean       @default(true) @map("is_variant_axis")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, categoryId, name])
+  @@index([tenantId, categoryId, position])
+  @@map("attribute_definitions")
+}
