@@ -753,6 +753,56 @@ The platform's scalability roadmap outlines the transition from a modular monoli
 
 ---
 
+## 21 Catalog Attribute System
+
+The Catalog Attribute System enables dynamic, type-safe product characteristics and variant axis configurations. It supports merchant-defined attributes that govern product specifications (metadata) and variant generation.
+
+### 21.1 Data Model: AttributeDefinition
+Each `AttributeDefinition` represents a schema configuration for an attribute, stored in the `attribute_definitions` database table:
+* **name:** The unique machine key (e.g. `storage_size`). Always normalized.
+* **type:** Data validation type: `select`, `color`, `text`, `number`, `boolean`.
+* **isRequired:** Flag requiring the attribute to be present in products/variants.
+* **isVariantAxis:** Flag determining if the attribute is used to generate stock-keeping units (SKUs) via Cartesian product matrix combinations.
+* **categoryId:** Scopes the definition to a specific category tree. When null, the attribute applies globally.
+
+### 21.2 Resolution Rules (Global vs. Category Scoped)
+* **Global Definitions:** Apply to all categories across the entire catalog.
+* **Category Scoped Definitions:** Apply recursively to the assigned category and all its subcategories.
+* **Active Resolution:** When checking or retrieving attributes for a product, the validation engine resolves the union of all global definitions and definitions scoped to the product's assigned categories.
+
+### 21.3 Specifications vs. Variant Attributes
+* **Product Specifications (`isVariantAxis = false`):** Metadata attached directly to a product (e.g., `material` = `Cotton`). Validated on product creation/update.
+* **Variant Attributes (`isVariantAxis = true`):** Active axes determining SKU combinations (e.g. `color` = `Red`, `size` = `M`). Validated on variant creation, variant update, and matrix generation.
+
+### 21.4 Validation Rules & Types
+The validation engine (`AttributeValidationService`) enforces strict schema constraints:
+* **select:** Value must match one of the predefined option values (value-matching is case-sensitive, normalized key).
+* **color:** Value must match one of the predefined option hex/color string values.
+* **text:** Value must be a string.
+* **number:** Value must be a finite, valid JavaScript number.
+* **boolean:** Value must be a boolean (`true`/`false`).
+* **Required Attributes:** If an active definition has `isRequired: true`, validation rejects payloads missing this key.
+
+### 21.5 Key Normalization
+All attribute machine keys are normalized to guarantee clean URLs, deterministic API parameters, and database index matches.
+* **Rules:** Trim whitespace, lowercase, replace spaces and dashes with underscores, reject empty strings or unsafe characters outside `^[a-z0-9_]+$`.
+* **Example:** `" Storage Size "` $\rightarrow$ `storage_size`.
+* **Backward Compatibility:** Legacy keys containing spaces or uppercase characters in the database are mapped on-the-fly to their normalized counterparts.
+
+### 21.6 Query Filter Syntax
+Storefront queries filter catalog variants using URL query parameters:
+* **Syntax:** `GET /products?attributes[color]=Red&attributes[size]=M`
+* **Parsing:** The `ProductQueryDto` interceptor automatically extracts and normalizes the nested `attributes` record keys before executing the PostgreSQL query.
+
+### 21.7 Caching & Tenant Isolation
+* **Explicit Set-Based Key Tracking:** To bypass Redis `SCAN` operations (which lock the event loop and degrade latency under load), we track keys using Redis Sets.
+  * When a cache key is set, it is registered under `tenant:${tenantId}:product-keys` or `tenant:${tenantId}:attr-def-keys` using `sadd`.
+  * Tracking sets are assigned a TTL of `86400` seconds (24 hours) to prevent memory leaks.
+* **Invalidation:** Mutations fetch set members using `SMEMBERS` and invalidate the exact cache keys, then delete the tracking set.
+* **Tenant Isolation:** Cache keys are strictly isolated per tenant domain.
+
+---
+
 ## 19 Technology Decision Record (ADR)
 
 The key architectural decisions and technology selections for Nexio Commerce are detailed below.
