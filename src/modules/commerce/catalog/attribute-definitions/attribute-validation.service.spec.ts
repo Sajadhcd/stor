@@ -116,10 +116,10 @@ describe('AttributeValidationService', () => {
 
       // Verify normalization of keys to definitions
       expect(result).toHaveProperty('size', 'S');
-      expect(result).toHaveProperty('Color', '#FF0000'); // Normalized key casing and option value casing
+      expect(result).toHaveProperty('color', '#FF0000'); // Normalized key casing and option value casing
       expect(result).toHaveProperty('material', 'Cotton');
       expect(result).toHaveProperty('voltage', 220); // Normalized to finite number
-      expect(result).toHaveProperty('hasBattery', true); // Normalized to boolean true
+      expect(result).toHaveProperty('hasbattery', true); // Normalized to boolean true
     });
 
     it('rejects missing isRequired attributes', async () => {
@@ -219,6 +219,17 @@ describe('AttributeValidationService', () => {
       expect(result).toHaveProperty('size', 'S');
       expect(result).toHaveProperty('custom_sku_suffix', 'LE'); // Preserved without error
     });
+
+    it('rejects duplicate normalized keys', async () => {
+      const input = {
+        size: 'S',
+        Size: 'M',
+      };
+
+      await expect(
+        service.validateAttributes(TENANT_ID, [], input),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('validateMatrixOptions', () => {
@@ -236,7 +247,7 @@ describe('AttributeValidationService', () => {
       );
 
       expect(result).toHaveProperty('size', ['S', 'M']);
-      expect(result).toHaveProperty('Color', ['#FF0000', '#0000FF']); // Casing normalized
+      expect(result).toHaveProperty('color', ['#FF0000', '#0000FF']); // Casing normalized
       expect(result).toHaveProperty('custom_field', ['value1', 'value2']); // Legacy allowed
     });
 
@@ -253,6 +264,17 @@ describe('AttributeValidationService', () => {
     it('rejects invalid option values in matrix lists', async () => {
       const options = {
         size: ['S', 'L'], // L is invalid
+      };
+
+      await expect(
+        service.validateMatrixOptions(TENANT_ID, [], options),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects duplicate normalized keys in matrix options', async () => {
+      const options = {
+        size: ['S'],
+        Size: ['M'],
       };
 
       await expect(

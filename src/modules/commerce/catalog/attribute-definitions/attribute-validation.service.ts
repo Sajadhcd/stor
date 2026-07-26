@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { AttributeType } from '@prisma/client';
 import { TenantPrismaService } from '../../../../infrastructure/database/tenant-prisma.service.js';
+import { normalizeAttributeKey } from './attribute-key.util.js';
 
 @Injectable()
 export class AttributeValidationService {
@@ -37,22 +38,39 @@ export class AttributeValidationService {
     // Create maps for case-insensitive lookup
     const defMap = new Map<string, any>();
     for (const def of definitions) {
-      defMap.set(def.name.toLowerCase(), def);
+      try {
+        const normName = normalizeAttributeKey(def.name);
+        defMap.set(normName, def);
+      } catch {
+        const safeName = def.name.trim().toLowerCase().replace(/\s+/g, '_');
+        defMap.set(safeName, def);
+      }
     }
 
     const normalizedAttrs: Record<string, any> = {};
-    const inputKeysLower = new Set<string>();
+    const inputKeysNormalized = new Set<string>();
 
     // 2. Validate and normalize provided attributes
     for (const [key, value] of Object.entries(attrs)) {
-      const keyLower = key.trim().toLowerCase();
-      inputKeysLower.add(keyLower);
+      let normalizedKey: string;
+      try {
+        normalizedKey = normalizeAttributeKey(key);
+      } catch (err: any) {
+        throw new BadRequestException(`Invalid attribute key: ${err.message}`);
+      }
 
-      const def = defMap.get(keyLower);
+      if (inputKeysNormalized.has(normalizedKey)) {
+        throw new BadRequestException(
+          `Duplicate attribute key "${normalizedKey}" detected after normalization`,
+        );
+      }
+      inputKeysNormalized.add(normalizedKey);
+
+      const def = defMap.get(normalizedKey);
 
       if (!def) {
-        // Legacy/ad-hoc attribute — allow it for backward compatibility
-        normalizedAttrs[key] = value;
+        // Legacy/ad-hoc attribute — allow it but store with normalized key
+        normalizedAttrs[normalizedKey] = value;
         continue;
       }
 
@@ -63,7 +81,7 @@ export class AttributeValidationService {
             `Required attribute "${def.name}" is missing or empty`,
           );
         }
-        normalizedAttrs[def.name] = null;
+        normalizedAttrs[normalizedKey] = null;
         continue;
       }
 
@@ -148,14 +166,19 @@ export class AttributeValidationService {
           normalizedValue = value;
       }
 
-      normalizedAttrs[def.name] = normalizedValue;
+      normalizedAttrs[normalizedKey] = normalizedValue;
     }
 
     // 3. Check for missing required attributes
     for (const def of definitions) {
       if (def.isRequired) {
-        const defNameLower = def.name.toLowerCase();
-        if (!inputKeysLower.has(defNameLower)) {
+        let normName: string;
+        try {
+          normName = normalizeAttributeKey(def.name);
+        } catch {
+          normName = def.name.trim().toLowerCase().replace(/\s+/g, '_');
+        }
+        if (!inputKeysNormalized.has(normName)) {
           throw new BadRequestException(
             `Required attribute "${def.name}" is missing`,
           );
@@ -197,22 +220,39 @@ export class AttributeValidationService {
     // Create maps for case-insensitive lookup
     const defMap = new Map<string, any>();
     for (const def of definitions) {
-      defMap.set(def.name.toLowerCase(), def);
+      try {
+        const normName = normalizeAttributeKey(def.name);
+        defMap.set(normName, def);
+      } catch {
+        const safeName = def.name.trim().toLowerCase().replace(/\s+/g, '_');
+        defMap.set(safeName, def);
+      }
     }
 
     const normalizedOptions: Record<string, string[]> = {};
-    const inputKeysLower = new Set<string>();
+    const inputKeysNormalized = new Set<string>();
 
     // 2. Validate and normalize provided options
     for (const [key, values] of Object.entries(opts)) {
-      const keyLower = key.trim().toLowerCase();
-      inputKeysLower.add(keyLower);
+      let normalizedKey: string;
+      try {
+        normalizedKey = normalizeAttributeKey(key);
+      } catch (err: any) {
+        throw new BadRequestException(`Invalid attribute key: ${err.message}`);
+      }
 
-      const def = defMap.get(keyLower);
+      if (inputKeysNormalized.has(normalizedKey)) {
+        throw new BadRequestException(
+          `Duplicate attribute key "${normalizedKey}" detected after normalization`,
+        );
+      }
+      inputKeysNormalized.add(normalizedKey);
+
+      const def = defMap.get(normalizedKey);
 
       if (!def) {
-        // Legacy/ad-hoc option — allow it and pass as-is
-        normalizedOptions[key] = values;
+        // Legacy/ad-hoc option — allow it and pass as-is (with normalized key)
+        normalizedOptions[normalizedKey] = values;
         continue;
       }
 
@@ -310,14 +350,19 @@ export class AttributeValidationService {
         }
       }
 
-      normalizedOptions[def.name] = normalizedValues;
+      normalizedOptions[normalizedKey] = normalizedValues;
     }
 
     // 3. Check for missing required attributes
     for (const def of definitions) {
       if (def.isRequired) {
-        const defNameLower = def.name.toLowerCase();
-        if (!inputKeysLower.has(defNameLower)) {
+        let normName: string;
+        try {
+          normName = normalizeAttributeKey(def.name);
+        } catch {
+          normName = def.name.trim().toLowerCase().replace(/\s+/g, '_');
+        }
+        if (!inputKeysNormalized.has(normName)) {
           throw new BadRequestException(
             `Required attribute "${def.name}" is missing`,
           );

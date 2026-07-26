@@ -10,6 +10,7 @@ import { CacheService } from '../../../../infrastructure/cache/cache.service.js'
 import { requestContextStorage } from '../../../../common/context/request-context.js';
 import { CreateAttributeDefinitionDto } from './dto/create-attribute-definition.dto.js';
 import { UpdateAttributeDefinitionDto } from './dto/update-attribute-definition.dto.js';
+import { normalizeAttributeKey } from './attribute-key.util.js';
 
 /** Cache TTL for attribute definition reads — 5 minutes. */
 const CACHE_TTL = 300;
@@ -180,13 +181,16 @@ export class AttributeDefinitionsService {
     // Verify category ownership
     await this.verifyCategory(tenantId, dto.categoryId);
 
+    // Normalize machine key name
+    const normalizedName = normalizeAttributeKey(dto.name);
+
     const result = await this.db.exec(async (tx) => {
       // Duplicate name check within the same (tenantId, categoryId) scope
       const existing = await tx.attributeDefinition.findFirst({
         where: {
           tenantId,
           categoryId: dto.categoryId ?? null,
-          name: dto.name,
+          name: normalizedName,
         },
       });
       if (existing) {
@@ -200,7 +204,7 @@ export class AttributeDefinitionsService {
         data: {
           tenantId,
           categoryId: dto.categoryId ?? null,
-          name: dto.name,
+          name: normalizedName,
           labelTranslations: dto.labelTranslations,
           type: dto.type,
           options: dto.options ? (dto.options as any) : null,
@@ -239,24 +243,28 @@ export class AttributeDefinitionsService {
     this.validateOptions(effectiveType, effectiveOptions as Record<string, unknown>[] | null);
 
     // If name is changing, check for duplicates in same scope
-    if (dto.name && dto.name !== existing.name) {
-      const duplicate = await this.db.exec((tx) =>
-        tx.attributeDefinition.findFirst({
-          where: {
-            tenantId,
-            categoryId: existing.categoryId,
-            name: dto.name,
-            id: { not: id },
-          },
-        }),
-      );
-      if (duplicate) {
-        const scope = existing.categoryId
-          ? `category "${existing.categoryId}"`
-          : 'global scope';
-        throw new ConflictException(
-          `Attribute name "${dto.name}" already exists in ${scope} for this tenant`,
+    let normalizedName: string | undefined = undefined;
+    if (dto.name !== undefined) {
+      normalizedName = normalizeAttributeKey(dto.name);
+      if (normalizedName !== existing.name) {
+        const duplicate = await this.db.exec((tx) =>
+          tx.attributeDefinition.findFirst({
+            where: {
+              tenantId,
+              categoryId: existing.categoryId,
+              name: normalizedName,
+              id: { not: id },
+            },
+          }),
         );
+        if (duplicate) {
+          const scope = existing.categoryId
+            ? `category "${existing.categoryId}"`
+            : 'global scope';
+          throw new ConflictException(
+            `Attribute name "${dto.name}" already exists in ${scope} for this tenant`,
+          );
+        }
       }
     }
 
@@ -264,7 +272,7 @@ export class AttributeDefinitionsService {
       tx.attributeDefinition.update({
         where: { id },
         data: {
-          ...(dto.name !== undefined && { name: dto.name }),
+          ...(normalizedName !== undefined && { name: normalizedName }),
           ...(dto.labelTranslations !== undefined && { labelTranslations: dto.labelTranslations }),
           ...(dto.type !== undefined && { type: dto.type }),
           ...(dto.options !== undefined && { options: dto.options ? (dto.options as any) : null }),

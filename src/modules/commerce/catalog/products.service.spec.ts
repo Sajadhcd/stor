@@ -122,6 +122,9 @@ interface MockPrismaTx {
     update: jest.Mock;
     delete: jest.Mock;
   };
+  attributeDefinition: {
+    findMany: jest.Mock;
+  };
 }
 
 describe('ProductsService', () => {
@@ -169,6 +172,9 @@ describe('ProductsService', () => {
           Promise.resolve(createMockVariant(args.data)),
         ),
         delete: jest.fn().mockResolvedValue(defaultVariant),
+      },
+      attributeDefinition: {
+        findMany: jest.fn().mockResolvedValue([]),
       },
     };
 
@@ -292,6 +298,36 @@ describe('ProductsService', () => {
         );
       });
     });
+
+    it('should filter variants using normalized keys and case-insensitive casing variants', async () => {
+      mockTx.attributeDefinition.findMany.mockResolvedValueOnce([{ name: 'Color' }]);
+      await service.findAll({
+        attributes: { color: 'red' },
+        skip: 0,
+        take: 20,
+      });
+
+      expect(mockTx.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            variants: {
+              some: {
+                AND: [
+                  {
+                    OR: [
+                      { attributes: { path: ['color'], equals: 'red' } },
+                      { attributes: { path: ['COLOR'], equals: 'red' } },
+                      { attributes: { path: ['Color'], equals: 'red' } },
+                    ],
+                  },
+                ],
+              },
+            },
+            deletedAt: null,
+          },
+        }),
+      );
+    });
   });
 
   describe('findById', () => {
@@ -338,6 +374,34 @@ describe('ProductsService', () => {
       mockTx.product.findFirst.mockResolvedValueOnce(null);
 
       await expect(service.findById('non-existent')).rejects.toThrow(NotFoundException);
+    });
+
+    it('should normalize returned legacy attribute keys on variants', async () => {
+      const product = createMockProduct({
+        variants: [
+          {
+            id: 'var-1',
+            tenantId: 'tenant-123',
+            productId: 'prod-123',
+            sku: 'SKU-LEGACY',
+            price: 100,
+            attributes: {
+              Color: 'Red',
+              SIZE: 'M',
+              'Storage Space': '64GB',
+            } as any,
+          } as any,
+        ],
+      });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+
+      const result = await service.findById('prod-123');
+
+      expect(result.variants[0].attributes).toEqual({
+        color: 'Red',
+        size: 'M',
+        storage_space: '64GB',
+      });
     });
   });
 

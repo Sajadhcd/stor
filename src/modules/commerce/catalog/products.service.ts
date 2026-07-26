@@ -6,6 +6,22 @@ import { Prisma } from '@prisma/client';
 import { PaginatedResponseDto } from '../../../common/dto/paginated-response.dto.js';
 import { ProductQueryDto } from './dto/product-query.dto.js';
 import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
+import { normalizeAttributeKey } from './attribute-definitions/attribute-key.util.js';
+
+function getCasingVariants(key: string, originalDefName?: string): string[] {
+  const variants = new Set<string>();
+  variants.add(key);
+  variants.add(key.toLowerCase());
+  variants.add(key.toUpperCase());
+  if (key.length > 0) {
+    variants.add(key.charAt(0).toUpperCase() + key.slice(1).toLowerCase());
+  }
+  if (originalDefName) {
+    variants.add(originalDefName);
+    variants.add(originalDefName.trim());
+  }
+  return Array.from(variants);
+}
 
 @Injectable()
 export class ProductsService {
@@ -71,11 +87,30 @@ export class ProductsService {
           },
         };
       }
+      // Fetch active definitions for tenant to support legacy name casing matching
+      const definitions = await tx.attributeDefinition.findMany({
+        where: { tenantId },
+      });
+
       if (query?.attributes && Object.keys(query.attributes).length > 0) {
-        const attrConditions = Object.entries(query.attributes).map(([key, val]) => ({
-          attributes: { path: [key], equals: val },
-        }));
-        variantWhere.AND = attrConditions;
+        const attrAndConditions = [];
+        for (const [key, val] of Object.entries(query.attributes)) {
+          const matchedDef = definitions.find((d) => {
+            try {
+              return normalizeAttributeKey(d.name) === key;
+            } catch {
+              return d.name.toLowerCase() === key;
+            }
+          });
+
+          const keys = getCasingVariants(key, matchedDef?.name);
+          attrAndConditions.push({
+            OR: keys.map((k) => ({
+              attributes: { path: [k], equals: val },
+            })),
+          });
+        }
+        variantWhere.AND = attrAndConditions;
       }
 
       if (Object.keys(variantWhere).length > 0) {
@@ -122,9 +157,22 @@ export class ProductsService {
       const mappedItems = items.map((product) => {
         const mappedVariants = product.variants.map((v) => {
           const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+          
+          const rawAttrs = (v.attributes as Record<string, any>) || {};
+          const normalizedAttrs: Record<string, any> = {};
+          for (const [attrKey, attrVal] of Object.entries(rawAttrs)) {
+            try {
+              normalizedAttrs[normalizeAttributeKey(attrKey)] = attrVal;
+            } catch {
+              const safeKey = attrKey.trim().toLowerCase().replace(/\s+/g, '_');
+              normalizedAttrs[safeKey] = attrVal;
+            }
+          }
+
           return {
             ...v,
             availableStock,
+            attributes: normalizedAttrs,
           };
         });
         return {
@@ -190,9 +238,22 @@ export class ProductsService {
 
     const mappedVariants = product.variants.map((v) => {
       const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+      
+      const rawAttrs = (v.attributes as Record<string, any>) || {};
+      const normalizedAttrs: Record<string, any> = {};
+      for (const [key, value] of Object.entries(rawAttrs)) {
+        try {
+          normalizedAttrs[normalizeAttributeKey(key)] = value;
+        } catch {
+          const safeKey = key.trim().toLowerCase().replace(/\s+/g, '_');
+          normalizedAttrs[safeKey] = value;
+        }
+      }
+
       return {
         ...v,
         availableStock,
+        attributes: normalizedAttrs,
       };
     });
 
