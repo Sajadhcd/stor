@@ -183,7 +183,7 @@ export class CartService {
 
       await this.validateInventory(data.variantId, newQuantity, tx);
 
-      const unitPrice = Number(variant.price);
+          const unitPrice = Number(variant.priceOverride ?? variant.price);
       const subtotal = unitPrice * newQuantity;
 
       if (existingItem) {
@@ -191,6 +191,7 @@ export class CartService {
           where: { id: existingItem.id },
           data: {
             quantity: newQuantity,
+            unitPrice,
             subtotal,
             metadata: data.metadata ? (data.metadata as Prisma.InputJsonValue) : (existingItem.metadata ? (existingItem.metadata as Prisma.InputJsonValue) : undefined),
           },
@@ -365,13 +366,16 @@ export class CartService {
 
           await this.validateInventory(guestItem.variantId, combinedQty, tx);
 
-          const unitPrice = Number(guestItem.unitPrice);
+          const unitPrice = guestItem.variant
+            ? Number(guestItem.variant.priceOverride ?? guestItem.variant.price)
+            : Number(guestItem.unitPrice);
 
           if (existingCustomerItem) {
             await tx.cartItem.update({
               where: { id: existingCustomerItem.id },
               data: {
                 quantity: combinedQty,
+                unitPrice,
                 subtotal: unitPrice * combinedQty,
               },
             });
@@ -379,7 +383,11 @@ export class CartService {
           } else {
             await tx.cartItem.update({
               where: { id: guestItem.id },
-              data: { cartId: targetCart.id },
+              data: { 
+                cartId: targetCart.id,
+                unitPrice,
+                subtotal: unitPrice * guestItem.quantity,
+              },
             });
           }
         }

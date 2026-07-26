@@ -19,6 +19,8 @@ import {
   Server,
   Activity,
   Layers,
+  FolderTree,
+  Tags,
   LogOut 
 } from 'lucide-react';
 import { clearSession, getSession } from '@/lib/auth';
@@ -26,6 +28,8 @@ import { clearSession, getSession } from '@/lib/auth';
 const merchantNavItems = [
   { name: 'لوحة التحكم', href: '/', icon: LayoutDashboard },
   { name: 'إدارة المنتجات', href: '/products', icon: Package },
+  { name: 'إدارة التصنيفات', href: '/categories', icon: FolderTree },
+  { name: 'خصائص ومواصفات المنتجات', href: '/attributes', icon: Tags },
   { name: 'إدارة المخزون', href: '/inventory', icon: Boxes },
   { name: 'المستودعات', href: '/warehouses', icon: Warehouse },
   { name: 'إدارة الطلبات', href: '/orders', icon: ShoppingBag },

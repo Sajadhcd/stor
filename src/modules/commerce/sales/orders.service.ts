@@ -373,7 +373,7 @@ export class OrdersService {
           variantId: item.variantId,
           sku: variant.sku,
           productName: (product.titleTranslations as any)?.en || 'Product',
-          variantName: variant.sku,
+          variantName: variant.variantName ?? variant.sku,
           priceUnit: Number(item.unitPrice),
           quantity: item.quantity,
           taxRate: 15,

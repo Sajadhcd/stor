@@ -10,19 +10,42 @@ export function ProductCard({ product }: { product: any }) {
     ? product.titleTranslations.ar || product.titleTranslations.en || 'منتج متميز'
     : 'منتج متميز';
 
+  // Filter active variants
+  const variants = (product.variants || []).filter((v: any) => v.isActive !== false);
+
   // Display the lowest valid variant price
-  const price = product.variants && product.variants.length > 0
-    ? Math.min(...product.variants.map((v: any) => Number(v.priceOverride || v.price || 0)))
+  const price = variants.length > 0
+    ? Math.min(...variants.map((v: any) => Number(v.priceOverride ?? v.price ?? 0)))
     : 75000;
+
+  const originalPrice = variants.length > 0
+    ? Math.max(...variants.filter((v: any) => v.compareAtPrice).map((v: any) => Number(v.compareAtPrice)))
+    : 0;
 
   const primaryImage = product.images?.find((img: any) => img.isPrimary)?.url || product.images?.[0]?.url;
   const brandName = product.brand?.name;
 
   // Determine variant states
-  const variants = product.variants || [];
   const totalAvailableStock = variants.reduce((sum: number, v: any) => sum + (v.availableStock || 0), 0);
   const isAllOutOfStock = variants.length === 0 || totalAvailableStock <= 0;
   const hasMultipleVariants = variants.length > 1;
+
+  // Aggregate attributes and colors across active variants
+  const attributesMap: Record<string, Set<string>> = {};
+  variants.forEach((v: any) => {
+    if (v.attributes && typeof v.attributes === 'object') {
+      Object.entries(v.attributes).forEach(([k, val]: [string, any]) => {
+        if (val !== undefined && val !== null && val !== '') {
+          const key = k.toLowerCase();
+          if (!attributesMap[key]) attributesMap[key] = new Set();
+          attributesMap[key].add(String(val));
+        }
+      });
+    }
+  });
+
+  const colors = attributesMap['color'] || attributesMap['colour'] || attributesMap['اللون'] || new Set<string>();
+  const hasAttributes = Object.keys(attributesMap).length > 0;
 
   const handleAddToCart = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -31,7 +54,7 @@ export function ProductCard({ product }: { product: any }) {
     if (variants.length === 0) return;
 
     const variant = variants[0];
-    const itemPrice = Number(variant.priceOverride || variant.price || 75000);
+    const itemPrice = Number(variant.priceOverride ?? variant.price ?? 75000);
 
     await addCartItem(
       variant.id,
@@ -41,6 +64,26 @@ export function ProductCard({ product }: { product: any }) {
       product.id
     );
     alert(`تمت إضافة "${title}" إلى السلة بنجاح!`);
+  };
+
+  // Helper to map English attribute names to readable Arabic summaries
+  const getArabicAttrName = (key: string) => {
+    switch (key) {
+      case 'color':
+      case 'colour':
+      case 'اللون':
+        return 'ألوان';
+      case 'size':
+      case 'المقاس':
+        return 'مقاسات';
+      case 'storage':
+      case 'memory':
+      case 'ram':
+      case 'الذاكرة':
+        return 'خيارات ذاكرة';
+      default:
+        return key;
+    }
   };
 
   return (
@@ -86,12 +129,66 @@ export function ProductCard({ product }: { product: any }) {
             {title}
           </h3>
           <p className="text-xs text-slate-400 mt-1 line-clamp-1">متوفر بحالة ممتازة وشحن مباشر</p>
+
+          {/* Dynamic Color Swatches */}
+          {colors.size > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-1">
+              {Array.from(colors).slice(0, 5).map((colorVal, idx) => {
+                const cleanColor = colorVal.trim();
+                const isColorCodeOrName = cleanColor.startsWith('#') || /^[a-zA-Z]+$/.test(cleanColor);
+                const styleObj = isColorCodeOrName ? { backgroundColor: cleanColor } : {};
+                return (
+                  <span
+                    key={idx}
+                    className="w-4 h-4 rounded-full border border-slate-300/80 shadow-2xs relative inline-flex items-center justify-center overflow-hidden shrink-0 transition-transform group-hover:scale-110"
+                    style={styleObj}
+                    title={cleanColor}
+                  >
+                    {!isColorCodeOrName && (
+                      <span className="text-[7px] font-extrabold bg-slate-100 text-slate-700 w-full h-full flex items-center justify-center">
+                        {cleanColor.slice(0, 2)}
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+              {colors.size > 5 && (
+                <span className="text-xxs font-extrabold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
+                  +{colors.size - 5}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Available Attribute Summaries */}
+          {hasAttributes && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {Object.entries(attributesMap).map(([k, vals], idx) => {
+                const label = getArabicAttrName(k);
+                return (
+                  <span
+                    key={idx}
+                    className="text-[10px] font-extrabold bg-slate-50 text-slate-600 px-2 py-0.5 rounded-md border border-slate-200/60 shadow-2xs"
+                  >
+                    {vals.size} {label}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
           <div>
             <span className="text-xs text-slate-400 block font-medium">السعر بالدينار:</span>
-            <span className="text-base font-black text-emerald-600 block">{formatIQD(price)}</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-base font-black text-emerald-600 block">{formatIQD(price)}</span>
+              {originalPrice > price && (
+                <span className="text-xxs font-bold text-slate-400 line-through">
+                  {formatIQD(originalPrice)}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Conditional Cart Button / Action */}

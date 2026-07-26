@@ -535,7 +535,13 @@ export class ProductsService {
       barcode?: string;
       price: number;
       costPrice?: number;
+      priceOverride?: number;
+      compareAtPrice?: number;
       weight?: number;
+      variantName?: string;
+      isActive?: boolean;
+      position?: number;
+      dimensions?: Record<string, any>;
       attributes?: Record<string, any>;
       tenantId: string;
     }
@@ -568,7 +574,13 @@ export class ProductsService {
           barcode: data.barcode,
           price: data.price,
           costPrice: data.costPrice,
+          priceOverride: data.priceOverride,
+          compareAtPrice: data.compareAtPrice,
           weight: data.weight,
+          variantName: data.variantName,
+          isActive: data.isActive ?? true,
+          position: data.position ?? 0,
+          dimensions: data.dimensions ? (data.dimensions as any) : undefined,
           attributes: data.attributes ? (data.attributes as any) : undefined,
         },
       });
@@ -586,7 +598,13 @@ export class ProductsService {
       barcode?: string;
       price?: number;
       costPrice?: number;
+      priceOverride?: number;
+      compareAtPrice?: number;
       weight?: number;
+      variantName?: string;
+      isActive?: boolean;
+      position?: number;
+      dimensions?: Record<string, any>;
       attributes?: Record<string, any>;
       tenantId: string;
     }
@@ -626,7 +644,13 @@ export class ProductsService {
           barcode: data.barcode,
           price: data.price,
           costPrice: data.costPrice,
+          priceOverride: data.priceOverride,
+          compareAtPrice: data.compareAtPrice,
           weight: data.weight,
+          variantName: data.variantName,
+          isActive: data.isActive,
+          position: data.position,
+          dimensions: data.dimensions !== undefined ? (data.dimensions as any) : undefined,
           attributes: data.attributes !== undefined ? (data.attributes as any) : undefined,
         },
       });
@@ -701,12 +725,15 @@ export class ProductsService {
           attributes[key] = combo[index];
         });
 
+        const variantName = combo.join(' / ');
+
         const variant = await tx.productVariant.create({
           data: {
             tenantId: data.tenantId,
             productId,
             sku: variantSku,
             price: data.basePrice,
+            variantName,
             attributes,
           },
         });
