@@ -200,6 +200,7 @@ export class ProductsService {
     });
 
     await this.cache.set(cacheKey, result, 300);
+    await this.cache.sadd(`tenant:${tenantId}:product-keys`, cacheKey);
     return result;
   }
 
@@ -263,6 +264,7 @@ export class ProductsService {
     };
 
     await this.cache.set(cacheKey, mappedProduct, 300);
+    await this.cache.sadd(`tenant:${tenantId}:product-keys`, cacheKey);
     return mappedProduct;
   }
 
@@ -380,7 +382,7 @@ export class ProductsService {
       return product;
     });
 
-    await this.cache.invalidatePattern(`tenant:${data.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${data.tenantId}:product-keys`);
     return result;
   }
 
@@ -487,7 +489,7 @@ export class ProductsService {
       return updated;
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -544,7 +546,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${tenantId}:product-keys`);
     return result;
   }
 
@@ -580,7 +582,7 @@ export class ProductsService {
       return { success: true, deletedId: imageId };
     });
 
-    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${tenantId}:product-keys`);
     return result;
   }
 
@@ -624,7 +626,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${tenantId}:product-keys`);
     return result;
   }
 
@@ -639,7 +641,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -710,7 +712,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -790,7 +792,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -810,7 +812,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -883,7 +885,7 @@ export class ProductsService {
       return createdVariants;
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 }

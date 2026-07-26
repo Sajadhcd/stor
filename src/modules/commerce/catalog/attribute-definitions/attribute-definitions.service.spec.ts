@@ -68,6 +68,8 @@ describe('AttributeDefinitionsService', () => {
       get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePattern: jest.fn().mockResolvedValue(undefined),
+      sadd: jest.fn().mockResolvedValue(1),
+      invalidateKeys: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<CacheService>;
 
     mockTx = {
@@ -245,9 +247,7 @@ describe('AttributeDefinitionsService', () => {
     it('invalidates cache after creation', async () => {
       mockTx.attributeDefinition.findFirst.mockResolvedValueOnce(null);
       await service.create(validDto, TENANT_ID);
-      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
-        expect.stringContaining(TENANT_ID),
-      );
+      expect(mockCache.invalidateKeys).toHaveBeenCalledWith(`tenant:${TENANT_ID}:attr-def-keys`);
     });
   });
 
@@ -257,7 +257,7 @@ describe('AttributeDefinitionsService', () => {
     it('updates a definition and invalidates cache', async () => {
       const result = await service.update(DEF_ID, { position: 5 }, TENANT_ID);
       expect(mockTx.attributeDefinition.update).toHaveBeenCalled();
-      expect(mockCache.invalidatePattern).toHaveBeenCalled();
+      expect(mockCache.invalidateKeys).toHaveBeenCalledWith(`tenant:${TENANT_ID}:attr-def-keys`);
       expect(result).toEqual(mockDef());
     });
 
@@ -297,9 +297,33 @@ describe('AttributeDefinitionsService', () => {
 
     it('invalidates cache after deletion', async () => {
       await service.remove(DEF_ID, TENANT_ID);
-      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
-        expect.stringContaining(TENANT_ID),
-      );
+      expect(mockCache.invalidateKeys).toHaveBeenCalledWith(`tenant:${TENANT_ID}:attr-def-keys`);
+    });
+  });
+
+  describe('Cache tracking and invalidation', () => {
+    it('should track and explicitly invalidate attribute definition cache keys', async () => {
+      // 1. findAll tracks cache key
+      mockTx.attributeDefinition.findMany.mockResolvedValueOnce([]);
+      const expectedListKey = `tenant:${TENANT_ID}:attr-def:list:all`;
+      await service.findAll();
+      expect(mockCache.set).toHaveBeenCalledWith(expectedListKey, expect.any(Object), 300);
+      expect(mockCache.sadd).toHaveBeenCalledWith(`tenant:${TENANT_ID}:attr-def-keys`, expectedListKey);
+
+      // 2. findById tracks cache key
+      mockTx.attributeDefinition.findFirst.mockResolvedValueOnce(mockDef());
+      const expectedDetailKey = `tenant:${TENANT_ID}:attr-def:${DEF_ID}`;
+      await service.findById(DEF_ID);
+      expect(mockCache.set).toHaveBeenCalledWith(expectedDetailKey, expect.any(Object), 300);
+      expect(mockCache.sadd).toHaveBeenCalledWith(`tenant:${TENANT_ID}:attr-def-keys`, expectedDetailKey);
+
+      // 3. findForCategory tracks cache key
+      mockTx.attributeDefinition.findMany.mockResolvedValueOnce([]);
+      mockTx.category.findFirst.mockResolvedValueOnce(mockCategory());
+      const expectedCategoryKey = `tenant:${TENANT_ID}:attr-def:category:${CATEGORY_ID}`;
+      await service.findForCategory(CATEGORY_ID);
+      expect(mockCache.set).toHaveBeenCalledWith(expectedCategoryKey, expect.any(Object), 300);
+      expect(mockCache.sadd).toHaveBeenCalledWith(`tenant:${TENANT_ID}:attr-def-keys`, expectedCategoryKey);
     });
   });
 });

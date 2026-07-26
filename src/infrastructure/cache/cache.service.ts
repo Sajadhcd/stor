@@ -140,6 +140,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     try {
       const client = this.getClient();
       const result = await client.sadd(formattedKey, ...members);
+      if (typeof client.expire === 'function') {
+        await client.expire(formattedKey, 86400); // 24 hours TTL for tracking sets
+      }
       this.sets++;
       this.logger.debug(`Cache SADD: ${formattedKey} (${members.length} items)`, 'CacheService');
       return result;
@@ -178,6 +181,22 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       this.errors++;
       this.logger.error(`Error fetching set members ${formattedKey}: ${err.message}`, err.stack, 'CacheService');
       return [];
+    }
+  }
+
+  async invalidateKeys(trackingKey: string): Promise<void> {
+    try {
+      const keys = await this.smembers(trackingKey);
+      if (keys.length > 0) {
+        for (const key of keys) {
+          await this.del(key);
+        }
+      }
+      await this.del(trackingKey);
+      this.logger.debug(`Cache INVALIDATE keys for trackingKey '${trackingKey}': ${keys.length} keys purged`, 'CacheService');
+    } catch (err: any) {
+      this.errors++;
+      this.logger.error(`Error invalidating keys for tracking key ${trackingKey}: ${err.message}`, err.stack, 'CacheService');
     }
   }
 

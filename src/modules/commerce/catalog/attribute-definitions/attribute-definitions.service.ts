@@ -104,6 +104,7 @@ export class AttributeDefinitionsService {
     );
 
     await this.cache.set(cacheKey, result, CACHE_TTL);
+    await this.cache.sadd(`tenant:${tenantId}:attr-def-keys`, cacheKey);
     return result;
   }
 
@@ -130,6 +131,7 @@ export class AttributeDefinitionsService {
     }
 
     await this.cache.set(cacheKey, definition, CACHE_TTL);
+    await this.cache.sadd(`tenant:${tenantId}:attr-def-keys`, cacheKey);
     return definition;
   }
 
@@ -163,6 +165,7 @@ export class AttributeDefinitionsService {
     );
 
     await this.cache.set(cacheKey, result, CACHE_TTL);
+    await this.cache.sadd(`tenant:${tenantId}:attr-def-keys`, cacheKey);
     return result;
   }
 
@@ -216,7 +219,7 @@ export class AttributeDefinitionsService {
       });
     });
 
-    await this.cache.invalidatePattern(cachePrefix(tenantId));
+    await this.cache.invalidateKeys(`tenant:${tenantId}:attr-def-keys`);
     return result;
   }
 
@@ -284,7 +287,7 @@ export class AttributeDefinitionsService {
       }),
     );
 
-    await this.cache.invalidatePattern(cachePrefix(tenantId));
+    await this.cache.invalidateKeys(`tenant:${tenantId}:attr-def-keys`);
     return result;
   }
 
@@ -303,7 +306,7 @@ export class AttributeDefinitionsService {
 
     await this.db.exec((tx) => tx.attributeDefinition.delete({ where: { id } }));
 
-    await this.cache.invalidatePattern(cachePrefix(tenantId));
+    await this.cache.invalidateKeys(`tenant:${tenantId}:attr-def-keys`);
     return { success: true, deletedId: id };
   }
 }
