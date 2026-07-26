@@ -19,11 +19,12 @@ export class AttributeValidationService {
     tenantId: string,
     categoryIds: string[],
     attributes: Record<string, any> | undefined | null,
+    isVariant?: boolean,
   ): Promise<Record<string, any>> {
     const attrs = attributes || {};
 
     // 1. Fetch active attribute definitions (global + category-scoped)
-    const definitions = await this.db.exec((tx) =>
+    let definitions = await this.db.exec((tx) =>
       tx.attributeDefinition.findMany({
         where: {
           tenantId,
@@ -34,6 +35,10 @@ export class AttributeValidationService {
         },
       }),
     );
+
+    if (isVariant !== undefined) {
+      definitions = definitions.filter((def) => def.isVariantAxis === isVariant);
+    }
 
     // Create maps for case-insensitive lookup
     const defMap = new Map<string, any>();

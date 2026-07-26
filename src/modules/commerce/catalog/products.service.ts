@@ -280,6 +280,14 @@ export class ProductsService {
     tenantId: string;
     categoryIds?: string[];
   }) {
+    const categoryIds = data.categoryIds || [];
+    const validatedAttributes = await this.attributeValidation.validateAttributes(
+      data.tenantId,
+      categoryIds,
+      data.attributes,
+      false, // isVariant = false
+    );
+
     const result = await this.db.exec(async (tx) => {
       let storeId = data.storeId;
       const storeExists = storeId
@@ -326,7 +334,7 @@ export class ProductsService {
           metaDescription: data.metaDescription,
           titleTranslations: data.titleTranslations,
           descriptionTranslations: data.descriptionTranslations,
-          attributes: data.attributes,
+          attributes: validatedAttributes,
           isPublished: data.isPublished ?? false,
         },
       });
@@ -388,9 +396,26 @@ export class ProductsService {
       descriptionTranslations?: any;
       attributes?: any;
       isPublished?: boolean;
+      categoryIds?: string[];
     }
   ) {
     const product = await this.findById(id);
+
+    const finalCategoryIds = data.categoryIds !== undefined
+      ? data.categoryIds
+      : (product.categories || []).map((c: any) => c.categoryId);
+
+    let validatedAttributes = data.attributes;
+    if (data.attributes !== undefined || data.categoryIds !== undefined) {
+      const attrsToValidate = data.attributes !== undefined ? data.attributes : (product.attributes as Record<string, any> || {});
+      validatedAttributes = await this.attributeValidation.validateAttributes(
+        product.tenantId,
+        finalCategoryIds,
+        attrsToValidate,
+        false, // isVariant = false
+      );
+    }
+
     const result = await this.db.exec(async (tx) => {
       if (data.brandId) {
         const brand = await tx.brand.findFirst({
@@ -398,6 +423,22 @@ export class ProductsService {
         });
         if (!brand) {
           throw new NotFoundException(`Brand with ID ${data.brandId} not found`);
+        }
+      }
+
+      if (data.categoryIds && data.categoryIds.length > 0) {
+        const validCategories = await tx.category.findMany({
+          where: {
+            id: { in: data.categoryIds },
+            tenantId: product.tenantId,
+          },
+          select: { id: true },
+        });
+
+        const validIds = validCategories.map(c => c.id);
+        const invalidIds = data.categoryIds.filter(id => !validIds.includes(id));
+        if (invalidIds.length > 0) {
+          throw new NotFoundException(`Categories not found or unauthorized: ${invalidIds.join(', ')}`);
         }
       }
 
@@ -410,10 +451,23 @@ export class ProductsService {
           metaDescription: data.metaDescription,
           titleTranslations: data.titleTranslations,
           descriptionTranslations: data.descriptionTranslations,
-          attributes: data.attributes,
+          attributes: validatedAttributes,
           isPublished: data.isPublished,
         },
       });
+
+      if (data.categoryIds !== undefined) {
+        await tx.categoriesOnProducts.deleteMany({ where: { productId: id } });
+        if (data.categoryIds.length > 0) {
+          await tx.categoriesOnProducts.createMany({
+            data: data.categoryIds.map(categoryId => ({
+              tenantId: product.tenantId,
+              productId: id,
+              categoryId,
+            })),
+          });
+        }
+      }
 
       if (data.imageUrls && data.imageUrls.length > 0) {
         await tx.productImage.deleteMany({ where: { productId: id } });
@@ -615,6 +669,7 @@ export class ProductsService {
       data.tenantId,
       categoryIds,
       data.attributes,
+      true, // isVariant = true
     );
 
     const result = await this.db.exec(async (tx) => {
@@ -686,6 +741,7 @@ export class ProductsService {
         data.tenantId,
         categoryIds,
         data.attributes,
+        true, // isVariant = true
       );
     }
 

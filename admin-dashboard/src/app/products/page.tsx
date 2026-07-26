@@ -45,6 +45,8 @@ export default function ProductsPage() {
         metaDescription: data.metaDescription || undefined,
         imageUrls: data.images.map((img) => img.url),
         isPublished: data.isPublished,
+        categoryIds: data.categoryIds || [],
+        attributes: data.attributes || {},
       };
 
       if (selectedProduct) {

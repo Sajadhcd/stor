@@ -47,4 +47,10 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   isPublished?: boolean;
+
+  @ApiPropertyOptional({ description: 'Associated category IDs', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  categoryIds?: string[];
 }

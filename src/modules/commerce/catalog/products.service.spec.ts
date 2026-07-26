@@ -115,6 +115,7 @@ interface MockPrismaTx {
   };
   categoriesOnProducts: {
     createMany: jest.Mock;
+    deleteMany: jest.Mock;
   };
   productVariant: {
     findFirst: jest.Mock;
@@ -162,6 +163,7 @@ describe('ProductsService', () => {
       },
       categoriesOnProducts: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       productVariant: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -183,7 +185,7 @@ describe('ProductsService', () => {
     };
 
     const mockAttributeValidation = {
-      validateAttributes: jest.fn().mockImplementation((tenantId, catIds, attrs) => Promise.resolve(attrs)),
+      validateAttributes: jest.fn().mockImplementation((tenantId, catIds, attrs, isVariant) => Promise.resolve(attrs)),
       validateMatrixOptions: jest.fn().mockImplementation((tenantId, catIds, options) => Promise.resolve(options)),
     };
 
@@ -407,14 +409,18 @@ describe('ProductsService', () => {
 
   describe('create', () => {
     it('should create product, link categories, and invalidate tenant cache', async () => {
-      const product = createMockProduct();
+      const product = createMockProduct({
+        attributes: { material: 'Cotton' },
+      });
       mockTx.product.create.mockResolvedValueOnce(product);
+      mockTx.category.findMany.mockResolvedValueOnce([{ id: 'cat-1' }]);
 
       const result = await service.create({
         storeId: 'store-123',
         titleTranslations: { en: 'New Product' },
         tenantId: 'tenant-123',
         categoryIds: ['cat-1'],
+        attributes: { material: 'Cotton' },
       });
 
       expect(result).toEqual(product);
@@ -493,6 +499,67 @@ describe('ProductsService', () => {
 
       await expect(service.update('invalid-id', { isPublished: true })).rejects.toThrow(
         NotFoundException,
+      );
+    });
+
+    it('should update categories, delete old ones, validate attributes, and save changes', async () => {
+      const product = createMockProduct({
+        id: 'prod-123',
+        tenantId: 'tenant-123',
+        categories: [{ categoryId: 'cat-old' }] as any,
+      });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.product.update.mockResolvedValueOnce({ ...product, attributes: { material: 'Wool' } });
+      mockTx.category.findMany.mockResolvedValueOnce([{ id: 'cat-new' }]);
+
+      const result = await service.update('prod-123', {
+        categoryIds: ['cat-new'],
+        attributes: { material: 'Wool' },
+      });
+
+      expect(mockTx.categoriesOnProducts.deleteMany).toHaveBeenCalledWith({
+        where: { productId: 'prod-123' },
+      });
+      expect(mockTx.categoriesOnProducts.createMany).toHaveBeenCalledWith({
+        data: [{ tenantId: 'tenant-123', productId: 'prod-123', categoryId: 'cat-new' }],
+      });
+      expect(mockTx.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'prod-123' },
+          data: expect.objectContaining({
+            attributes: { material: 'Wool' },
+          }),
+        }),
+      );
+    });
+
+    it('should throw NotFoundException in update if categoryIds contain invalid or cross-tenant IDs', async () => {
+      const product = createMockProduct({ id: 'prod-123', tenantId: 'tenant-123' });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.category.findMany.mockResolvedValueOnce([]);
+
+      await expect(
+        service.update('prod-123', {
+          categoryIds: ['unauthorized-cat'],
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should query categories strictly scoped to the tenant to maintain tenant isolation', async () => {
+      const product = createMockProduct({ id: 'prod-123', tenantId: 'tenant-123' });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.category.findMany.mockResolvedValueOnce([{ id: 'cat-1' }]);
+
+      await service.update('prod-123', {
+        categoryIds: ['cat-1'],
+      });
+
+      expect(mockTx.category.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tenantId: 'tenant-123',
+          }),
+        }),
       );
     });
   });
