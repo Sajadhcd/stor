@@ -6,6 +6,7 @@ import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { requestContextStorage } from '../../../common/context/request-context.js';
 import { Prisma } from '@prisma/client';
 import { SortOrder } from '../../../common/dto/pagination-query.dto.js';
+import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
 
 interface MockProduct {
   id: string;
@@ -175,11 +176,17 @@ describe('ProductsService', () => {
       exec: jest.fn().mockImplementation(<T>(cb: TxCallback<T>) => cb(mockTx)),
     };
 
+    const mockAttributeValidation = {
+      validateAttributes: jest.fn().mockImplementation((tenantId, catIds, attrs) => Promise.resolve(attrs)),
+      validateMatrixOptions: jest.fn().mockImplementation((tenantId, catIds, options) => Promise.resolve(options)),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
         { provide: TenantPrismaService, useValue: mockTenantPrismaService },
         { provide: CacheService, useValue: mockCacheService },
+        { provide: AttributeValidationService, useValue: mockAttributeValidation },
       ],
     }).compile();
 

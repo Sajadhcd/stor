@@ -5,12 +5,14 @@ import { requestContextStorage } from '../../../common/context/request-context.j
 import { Prisma } from '@prisma/client';
 import { PaginatedResponseDto } from '../../../common/dto/paginated-response.dto.js';
 import { ProductQueryDto } from './dto/product-query.dto.js';
+import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
 
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly db: TenantPrismaService,
-    private readonly cache: CacheService
+    private readonly cache: CacheService,
+    private readonly attributeValidation: AttributeValidationService,
   ) {}
 
   private getTenantId(): string {
@@ -547,6 +549,12 @@ export class ProductsService {
     }
   ) {
     const product = await this.findById(productId);
+    const categoryIds = (product.categories || []).map((c: any) => c.categoryId);
+    const validatedAttributes = await this.attributeValidation.validateAttributes(
+      data.tenantId,
+      categoryIds,
+      data.attributes,
+    );
 
     const result = await this.db.exec(async (tx) => {
       // Check SKU uniqueness per tenant
@@ -581,7 +589,7 @@ export class ProductsService {
           isActive: data.isActive ?? true,
           position: data.position ?? 0,
           dimensions: data.dimensions ? (data.dimensions as any) : undefined,
-          attributes: data.attributes ? (data.attributes as any) : undefined,
+          attributes: validatedAttributes ? (validatedAttributes as any) : undefined,
         },
       });
     });
@@ -610,6 +618,15 @@ export class ProductsService {
     }
   ) {
     const product = await this.findById(productId);
+    let validatedAttributes: Record<string, any> | undefined = undefined;
+    if (data.attributes !== undefined) {
+      const categoryIds = (product.categories || []).map((c: any) => c.categoryId);
+      validatedAttributes = await this.attributeValidation.validateAttributes(
+        data.tenantId,
+        categoryIds,
+        data.attributes,
+      );
+    }
 
     const result = await this.db.exec(async (tx) => {
       const variant = await tx.productVariant.findFirst({
@@ -651,7 +668,7 @@ export class ProductsService {
           isActive: data.isActive,
           position: data.position,
           dimensions: data.dimensions !== undefined ? (data.dimensions as any) : undefined,
-          attributes: data.attributes !== undefined ? (data.attributes as any) : undefined,
+          attributes: validatedAttributes !== undefined ? (validatedAttributes as any) : undefined,
         },
       });
     });
@@ -690,9 +707,15 @@ export class ProductsService {
     }
   ) {
     const product = await this.findById(productId);
+    const categoryIds = (product.categories || []).map((c: any) => c.categoryId);
+    const normalizedOptions = await this.attributeValidation.validateMatrixOptions(
+      data.tenantId,
+      categoryIds,
+      data.options,
+    );
 
-    const optionKeys = Object.keys(data.options);
-    const optionValues = Object.values(data.options);
+    const optionKeys = Object.keys(normalizedOptions);
+    const optionValues = Object.values(normalizedOptions);
     if (optionValues.length === 0) {
       throw new BadRequestException('No options provided for variant matrix generation');
     }
