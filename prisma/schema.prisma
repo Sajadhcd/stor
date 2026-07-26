@@ -1,7 +1,7 @@
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [postgis]
+  extensions = [postgis, pg_trgm]
 }
 
 generator client {
@@ -355,6 +355,7 @@ model ProductVariant {
   @@unique([tenantId, barcode])
   @@index([tenantId, productId])
   @@index([tenantId, isActive, position])
+  @@index([tenantId, price])
   @@map("product_variants")
 }
 

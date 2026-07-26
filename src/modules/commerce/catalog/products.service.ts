@@ -121,42 +121,104 @@ export class ProductsService {
 
       const take = query?.take || 20;
       const skip = query?.skip || 0;
-      let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
-      if (query?.sortBy === 'created_at' || query?.sortBy === 'createdAt') {
-        orderBy = { createdAt: (query.sortOrder as Prisma.SortOrder) || 'desc' };
-      } else if (query?.sortBy && query.sortBy !== 'price_asc' && query.sortBy !== 'price_desc' && query.sortBy !== 'title') {
-        orderBy = { [query.sortBy]: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+      let items: any[] = [];
+      let total = 0;
+
+      if (query?.sortBy === 'price_asc' || query?.sortBy === 'price_desc') {
+        const matchedProducts = await tx.product.findMany({
+          where,
+          select: { id: true },
+        });
+        const productIds = matchedProducts.map((p) => p.id);
+        total = productIds.length;
+
+        if (productIds.length === 0) {
+          items = [];
+        } else {
+          const sortDir = query.sortBy === 'price_asc' ? 'ASC' : 'DESC';
+          const aggFunc = query.sortBy === 'price_asc' ? 'MIN' : 'MAX';
+
+          const placeholders = productIds.map((_, index) => `$${index + 1}`).join(', ');
+          const takeParamIndex = productIds.length + 1;
+          const skipParamIndex = productIds.length + 2;
+
+          const rawQuery = `
+            SELECT p.id::text as id
+            FROM products p
+            LEFT JOIN product_variants pv ON p.id = pv.product_id
+            WHERE p.id IN (${placeholders})
+            GROUP BY p.id
+            ORDER BY ${aggFunc}(pv.price) ${sortDir}
+            LIMIT $${takeParamIndex} OFFSET $${skipParamIndex}
+          `;
+
+          const queryArgs = [...productIds, take, skip];
+          const sortedRows = await tx.$queryRawUnsafe<Array<{ id: string }>>(rawQuery, ...queryArgs);
+          const sortedIds = sortedRows.map((r) => r.id);
+
+          const dbItems = await tx.product.findMany({
+            where: { id: { in: sortedIds } },
+            include: {
+              brand: true,
+              images: {
+                orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+              },
+              variants: {
+                include: {
+                  stockLevels: true,
+                },
+              },
+              categories: {
+                include: {
+                  category: true,
+                },
+              },
+            },
+          });
+
+          const itemsMap = new Map(dbItems.map((item) => [item.id, item]));
+          items = sortedIds.map((id) => itemsMap.get(id)).filter(Boolean);
+        }
+      } else {
+        let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
+        if (query?.sortBy === 'created_at' || query?.sortBy === 'createdAt') {
+          orderBy = { createdAt: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+        } else if (query?.sortBy && query.sortBy !== 'title') {
+          orderBy = { [query.sortBy]: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+        }
+
+        const [dbItems, dbTotal] = await Promise.all([
+          tx.product.findMany({
+            where,
+            include: {
+              brand: true,
+              images: {
+                orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+              },
+              variants: {
+                include: {
+                  stockLevels: true,
+                },
+              },
+              categories: {
+                include: {
+                  category: true,
+                },
+              },
+            },
+            orderBy,
+            take,
+            skip,
+          }),
+          tx.product.count({ where }),
+        ]);
+        items = dbItems;
+        total = dbTotal;
       }
 
-      const [items, total] = await Promise.all([
-        tx.product.findMany({
-          where,
-          include: {
-            brand: true,
-            images: {
-              orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
-            },
-            variants: {
-              include: {
-                stockLevels: true,
-              },
-            },
-            categories: {
-              include: {
-                category: true,
-              },
-            },
-          },
-          orderBy,
-          take,
-          skip,
-        }),
-        tx.product.count({ where }),
-      ]);
-
-      const mappedItems = items.map((product) => {
-        const mappedVariants = product.variants.map((v) => {
-          const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+      const mappedItems = items.map((product: any) => {
+        const mappedVariants = product.variants.map((v: any) => {
+          const availableStock = Math.max(0, v.stockLevels?.reduce((sum: number, sl: any) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
           
           const rawAttrs = (v.attributes as Record<string, any>) || {};
           const normalizedAttrs: Record<string, any> = {};
@@ -181,22 +243,7 @@ export class ProductsService {
         };
       });
 
-      let finalItems = mappedItems;
-      if (query?.sortBy === 'price_asc') {
-        finalItems = [...mappedItems].sort((a, b) => {
-          const minA = Math.min(...a.variants.map((v) => Number(v.price) || 0));
-          const minB = Math.min(...b.variants.map((v) => Number(v.price) || 0));
-          return minA - minB;
-        });
-      } else if (query?.sortBy === 'price_desc') {
-        finalItems = [...mappedItems].sort((a, b) => {
-          const maxA = Math.max(...a.variants.map((v) => Number(v.price) || 0));
-          const maxB = Math.max(...b.variants.map((v) => Number(v.price) || 0));
-          return maxB - maxA;
-        });
-      }
-
-      return new PaginatedResponseDto(finalItems, total, query?.page || 1, query?.limit || 20);
+      return new PaginatedResponseDto(mappedItems, total, query?.page || 1, query?.limit || 20);
     });
 
     await this.cache.set(cacheKey, result, 300);

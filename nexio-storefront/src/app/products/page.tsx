@@ -74,6 +74,18 @@ function ProductsListingContent() {
   useEffect(() => { setMinPriceInput(minPrice); }, [minPrice]);
   useEffect(() => { setMaxPriceInput(maxPrice); }, [maxPrice]);
 
+  // Debounce searchInput and update URL parameters after 300ms
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (searchInput !== search) {
+        updateUrlParams({ search: searchInput || null });
+      }
+    }, 300);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchInput, search]);
+
+
   /** Push URL updates without full navigation. */
   const updateUrlParams = (newParams: Record<string, string | null>) => {
     const currentSearch = typeof window !== 'undefined' ? window.location.search : searchParams.toString();
@@ -448,7 +460,6 @@ function ProductsListingContent() {
                 value={searchInput}
                 onChange={(e) => {
                   setSearchInput(e.target.value);
-                  updateUrlParams({ search: e.target.value });
                 }}
                 placeholder="ابحث عن اسم المنتج، SKU، ماركة..."
                 className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-800"
