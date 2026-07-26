@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.2.0] - 2026-07-26 (Phase B1-E: Attribute Validation, E2E Coverage & Cleanup)
+
+### Status: **Attribute System Hardened**
+
+### Added
+- **Phase B1-E1: Attribute Validation Service**
+  - Created `AttributeValidationService` to resolve and validate both global and category-scoped attribute definitions.
+  - Enforces type constraints for `select` (options values check), `color` (options hex check), `text` (string validation), `number` (finite value check), and `boolean`.
+  - Rejects variants or products missing definitions configured with `isRequired: true`.
+  - Kept backward compatibility by permitting legacy attributes that don't match active definitions.
+- **Phase B1-E2: Attribute Key Normalization**
+  - Added `normalizeAttributeKey` utility that lowercases, trims, and replaces spaces and special characters with underscores.
+  - Integrated normalization across creating, updating, and duplicate checking of attribute definitions, query filters parsing, variant matrix generation, and dynamic loading.
+- **Phase B1-E3: Admin Category Assignment & Specifications**
+  - Added category tree multi-select to the Admin Product Form.
+  - Enabled dynamic loading and validation of product specifications (`isVariantAxis === false`) based on selected categories.
+- **Phase B1-E4: Performance & Cache Hardening**
+  - Implemented explicit O(1) set-based cache key tracking (`invalidateKeys` via Redis `sadd`, `smembers`, and `del`) per tenant (`product-keys` and `attr-def-keys`).
+  - Completely replaced expensive wildcard `SCAN` operations in Catalog modules with tracked key purging.
+  - Created a raw PostgreSQL migration to define an additive GIN `jsonb_path_ops` index on `product_variants.attributes` for high-performance dynamic queries.
+- **Phase B1-E5: Final E2E Hardening & Documentation**
+  - Added `test/attribute-system.e2e-spec.ts` covering full attribute definitions lifecycles, specifications, variants validation, matrix generation, query filtering, and tenant isolation.
+  - Extended Playwright smoke test coverage in `test/browser-smoke.mjs` for admin attributes page, dynamic controls, matrix generator toggles, and storefront dynamic filters.
+  - Documented the attribute system architecture, caching, and key resolution rules.
+
+---
+
 ## [1.1.0] - 2026-07-22 (P1 Security Finalization & Architecture Polish)
 
 ### Status: **Backend Core Production Ready**

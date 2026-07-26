@@ -6,6 +6,7 @@ import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { requestContextStorage } from '../../../common/context/request-context.js';
 import { Prisma } from '@prisma/client';
 import { SortOrder } from '../../../common/dto/pagination-query.dto.js';
+import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
 
 interface MockProduct {
   id: string;
@@ -114,12 +115,16 @@ interface MockPrismaTx {
   };
   categoriesOnProducts: {
     createMany: jest.Mock;
+    deleteMany: jest.Mock;
   };
   productVariant: {
     findFirst: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
     delete: jest.Mock;
+  };
+  attributeDefinition: {
+    findMany: jest.Mock;
   };
 }
 
@@ -134,6 +139,8 @@ describe('ProductsService', () => {
       get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePattern: jest.fn().mockResolvedValue(undefined),
+      sadd: jest.fn().mockResolvedValue(1),
+      invalidateKeys: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<CacheService>;
 
     const defaultProduct = createMockProduct();
@@ -158,6 +165,7 @@ describe('ProductsService', () => {
       },
       categoriesOnProducts: {
         createMany: jest.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       productVariant: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -169,10 +177,18 @@ describe('ProductsService', () => {
         ),
         delete: jest.fn().mockResolvedValue(defaultVariant),
       },
+      attributeDefinition: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
 
     mockTenantPrismaService = {
       exec: jest.fn().mockImplementation(<T>(cb: TxCallback<T>) => cb(mockTx)),
+    };
+
+    const mockAttributeValidation = {
+      validateAttributes: jest.fn().mockImplementation((tenantId, catIds, attrs, isVariant) => Promise.resolve(attrs)),
+      validateMatrixOptions: jest.fn().mockImplementation((tenantId, catIds, options) => Promise.resolve(options)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -180,6 +196,7 @@ describe('ProductsService', () => {
         ProductsService,
         { provide: TenantPrismaService, useValue: mockTenantPrismaService },
         { provide: CacheService, useValue: mockCacheService },
+        { provide: AttributeValidationService, useValue: mockAttributeValidation },
       ],
     }).compile();
 
@@ -285,6 +302,36 @@ describe('ProductsService', () => {
         );
       });
     });
+
+    it('should filter variants using normalized keys and case-insensitive casing variants', async () => {
+      mockTx.attributeDefinition.findMany.mockResolvedValueOnce([{ name: 'Color' }]);
+      await service.findAll({
+        attributes: { color: 'red' },
+        skip: 0,
+        take: 20,
+      });
+
+      expect(mockTx.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            variants: {
+              some: {
+                AND: [
+                  {
+                    OR: [
+                      { attributes: { path: ['color'], equals: 'red' } },
+                      { attributes: { path: ['COLOR'], equals: 'red' } },
+                      { attributes: { path: ['Color'], equals: 'red' } },
+                    ],
+                  },
+                ],
+              },
+            },
+            deletedAt: null,
+          },
+        }),
+      );
+    });
   });
 
   describe('findById', () => {
@@ -332,25 +379,57 @@ describe('ProductsService', () => {
 
       await expect(service.findById('non-existent')).rejects.toThrow(NotFoundException);
     });
+
+    it('should normalize returned legacy attribute keys on variants', async () => {
+      const product = createMockProduct({
+        variants: [
+          {
+            id: 'var-1',
+            tenantId: 'tenant-123',
+            productId: 'prod-123',
+            sku: 'SKU-LEGACY',
+            price: 100,
+            attributes: {
+              Color: 'Red',
+              SIZE: 'M',
+              'Storage Space': '64GB',
+            } as any,
+          } as any,
+        ],
+      });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+
+      const result = await service.findById('prod-123');
+
+      expect(result.variants[0].attributes).toEqual({
+        color: 'Red',
+        size: 'M',
+        storage_space: '64GB',
+      });
+    });
   });
 
   describe('create', () => {
     it('should create product, link categories, and invalidate tenant cache', async () => {
-      const product = createMockProduct();
+      const product = createMockProduct({
+        attributes: { material: 'Cotton' },
+      });
       mockTx.product.create.mockResolvedValueOnce(product);
+      mockTx.category.findMany.mockResolvedValueOnce([{ id: 'cat-1' }]);
 
       const result = await service.create({
         storeId: 'store-123',
         titleTranslations: { en: 'New Product' },
         tenantId: 'tenant-123',
         categoryIds: ['cat-1'],
+        attributes: { material: 'Cotton' },
       });
 
       expect(result).toEqual(product);
       expect(mockTx.categoriesOnProducts.createMany).toHaveBeenCalledWith({
         data: [{ tenantId: 'tenant-123', productId: product.id, categoryId: 'cat-1' }],
       });
-      expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+      expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
     });
 
     it('should use default store when provided storeId is not found for tenant', async () => {
@@ -414,7 +493,7 @@ describe('ProductsService', () => {
       const result = await service.update('prod-123', { isPublished: true });
 
       expect(result.isPublished).toBe(true);
-      expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+      expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
     });
 
     it('should throw NotFoundException if product to update does not exist', async () => {
@@ -422,6 +501,67 @@ describe('ProductsService', () => {
 
       await expect(service.update('invalid-id', { isPublished: true })).rejects.toThrow(
         NotFoundException,
+      );
+    });
+
+    it('should update categories, delete old ones, validate attributes, and save changes', async () => {
+      const product = createMockProduct({
+        id: 'prod-123',
+        tenantId: 'tenant-123',
+        categories: [{ categoryId: 'cat-old' }] as any,
+      });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.product.update.mockResolvedValueOnce({ ...product, attributes: { material: 'Wool' } });
+      mockTx.category.findMany.mockResolvedValueOnce([{ id: 'cat-new' }]);
+
+      const result = await service.update('prod-123', {
+        categoryIds: ['cat-new'],
+        attributes: { material: 'Wool' },
+      });
+
+      expect(mockTx.categoriesOnProducts.deleteMany).toHaveBeenCalledWith({
+        where: { productId: 'prod-123' },
+      });
+      expect(mockTx.categoriesOnProducts.createMany).toHaveBeenCalledWith({
+        data: [{ tenantId: 'tenant-123', productId: 'prod-123', categoryId: 'cat-new' }],
+      });
+      expect(mockTx.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'prod-123' },
+          data: expect.objectContaining({
+            attributes: { material: 'Wool' },
+          }),
+        }),
+      );
+    });
+
+    it('should throw NotFoundException in update if categoryIds contain invalid or cross-tenant IDs', async () => {
+      const product = createMockProduct({ id: 'prod-123', tenantId: 'tenant-123' });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.category.findMany.mockResolvedValueOnce([]);
+
+      await expect(
+        service.update('prod-123', {
+          categoryIds: ['unauthorized-cat'],
+        }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should query categories strictly scoped to the tenant to maintain tenant isolation', async () => {
+      const product = createMockProduct({ id: 'prod-123', tenantId: 'tenant-123' });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.category.findMany.mockResolvedValueOnce([{ id: 'cat-1' }]);
+
+      await service.update('prod-123', {
+        categoryIds: ['cat-1'],
+      });
+
+      expect(mockTx.category.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tenantId: 'tenant-123',
+          }),
+        }),
       );
     });
   });
@@ -438,7 +578,7 @@ describe('ProductsService', () => {
       const result = await service.softDelete('prod-123');
 
       expect(result.deletedAt).toBeDefined();
-      expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+      expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
     });
   });
 
@@ -457,7 +597,7 @@ describe('ProductsService', () => {
         });
 
         expect(result.sku).toBe('NEW-SKU');
-        expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+        expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
       });
 
       it('should throw BadRequestException on duplicate SKU per tenant', async () => {
@@ -509,7 +649,7 @@ describe('ProductsService', () => {
           where: { id: 'var-1' },
           data: expect.objectContaining({ price: 250 }),
         });
-        expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+        expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
       });
 
       it('should throw NotFoundException if variant does not belong to product or tenant', async () => {
@@ -537,7 +677,7 @@ describe('ProductsService', () => {
         await service.deleteVariant('prod-123', 'var-1', 'tenant-123');
 
         expect(mockTx.productVariant.delete).toHaveBeenCalledWith({ where: { id: 'var-1' } });
-        expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+        expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
       });
     });
 
@@ -577,7 +717,7 @@ describe('ProductsService', () => {
         expect(result).toHaveLength(8);
         expect(result[0].sku).toBe('HOODIE-S-Red-Cotton');
         expect(result[7].sku).toBe('HOODIE-M-Blue-Poly');
-        expect(mockCacheService.invalidatePattern).toHaveBeenCalledWith('tenant:tenant-123:product');
+        expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
       });
 
       it('should skip existing variant SKUs gracefully without duplicate creation', async () => {
@@ -642,6 +782,41 @@ describe('ProductsService', () => {
         where: { id: { in: ['cat-1'] }, tenantId: 'tenant-A' },
         select: { id: true },
       });
+    });
+  });
+
+  describe('Cache Invalidation & explicit key tracking', () => {
+    it('should track product detail and listing cache keys in a tenant set and invalidate them explicitly', async () => {
+      // 1. findAll tracks cache key
+      mockTx.product.findMany.mockResolvedValueOnce([]);
+      mockTx.product.count.mockResolvedValueOnce(0);
+      
+      const query = { page: 1, limit: 10 } as any;
+      const expectedListKey = `tenant:tenant-123:products:${JSON.stringify(query)}`;
+      await requestContextStorage.run({ tenantId: 'tenant-123', requestId: 'r1', correlationId: 'c1' }, async () => {
+        await service.findAll(query);
+      });
+      
+      expect(mockCacheService.set).toHaveBeenCalledWith(expectedListKey, expect.any(Object), 300);
+      expect(mockCacheService.sadd).toHaveBeenCalledWith('tenant:tenant-123:product-keys', expectedListKey);
+
+      // 2. findById tracks cache key
+      const product = createMockProduct({ id: 'prod-123' });
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      const expectedDetailKey = `tenant:tenant-123:product:prod-123`;
+      await requestContextStorage.run({ tenantId: 'tenant-123', requestId: 'r1', correlationId: 'c1' }, async () => {
+        await service.findById('prod-123');
+      });
+
+      expect(mockCacheService.set).toHaveBeenCalledWith(expectedDetailKey, expect.any(Object), 300);
+      expect(mockCacheService.sadd).toHaveBeenCalledWith('tenant:tenant-123:product-keys', expectedDetailKey);
+
+      // 3. Update invalidates tracked keys for tenant-123 only
+      mockTx.product.findFirst.mockResolvedValueOnce(product);
+      mockTx.product.update.mockResolvedValueOnce(product);
+      await service.update('prod-123', { isPublished: true });
+
+      expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
     });
   });
 });

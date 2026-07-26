@@ -226,6 +226,30 @@ describe('CacheService', () => {
     });
   });
 
+  describe('sadd with TTL and invalidateKeys', () => {
+    it('should sadd members and set TTL to 86400', async () => {
+      mockRedis.sadd.mockResolvedValue(1);
+      mockRedis.expire = jest.fn().mockResolvedValue(1);
+
+      await service.sadd('tracking-key', 'k1', 'k2');
+
+      expect(mockRedis.sadd).toHaveBeenCalledWith('test:cache:tracking-key', 'k1', 'k2');
+      expect(mockRedis.expire).toHaveBeenCalledWith('test:cache:tracking-key', 86400);
+    });
+
+    it('should retrieve keys from set and delete them plus the set itself in invalidateKeys', async () => {
+      mockRedis.smembers.mockResolvedValue(['k1', 'k2']);
+      mockRedis.del.mockResolvedValue(1);
+
+      await service.invalidateKeys('tracking-key');
+
+      expect(mockRedis.smembers).toHaveBeenCalledWith('test:cache:tracking-key');
+      expect(mockRedis.del).toHaveBeenCalledWith('test:cache:k1');
+      expect(mockRedis.del).toHaveBeenCalledWith('test:cache:k2');
+      expect(mockRedis.del).toHaveBeenCalledWith('test:cache:tracking-key');
+    });
+  });
+
   describe('ping', () => {
     it('should return true if Redis responds with PONG', async () => {
       mockRedis.ping.mockResolvedValue('PONG');

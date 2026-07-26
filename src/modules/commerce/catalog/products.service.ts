@@ -5,12 +5,30 @@ import { requestContextStorage } from '../../../common/context/request-context.j
 import { Prisma } from '@prisma/client';
 import { PaginatedResponseDto } from '../../../common/dto/paginated-response.dto.js';
 import { ProductQueryDto } from './dto/product-query.dto.js';
+import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
+import { normalizeAttributeKey } from './attribute-definitions/attribute-key.util.js';
+
+function getCasingVariants(key: string, originalDefName?: string): string[] {
+  const variants = new Set<string>();
+  variants.add(key);
+  variants.add(key.toLowerCase());
+  variants.add(key.toUpperCase());
+  if (key.length > 0) {
+    variants.add(key.charAt(0).toUpperCase() + key.slice(1).toLowerCase());
+  }
+  if (originalDefName) {
+    variants.add(originalDefName);
+    variants.add(originalDefName.trim());
+  }
+  return Array.from(variants);
+}
 
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly db: TenantPrismaService,
-    private readonly cache: CacheService
+    private readonly cache: CacheService,
+    private readonly attributeValidation: AttributeValidationService,
   ) {}
 
   private getTenantId(): string {
@@ -69,11 +87,30 @@ export class ProductsService {
           },
         };
       }
+      // Fetch active definitions for tenant to support legacy name casing matching
+      const definitions = await tx.attributeDefinition.findMany({
+        where: { tenantId },
+      });
+
       if (query?.attributes && Object.keys(query.attributes).length > 0) {
-        const attrConditions = Object.entries(query.attributes).map(([key, val]) => ({
-          attributes: { path: [key], equals: val },
-        }));
-        variantWhere.AND = attrConditions;
+        const attrAndConditions = [];
+        for (const [key, val] of Object.entries(query.attributes)) {
+          const matchedDef = definitions.find((d) => {
+            try {
+              return normalizeAttributeKey(d.name) === key;
+            } catch {
+              return d.name.toLowerCase() === key;
+            }
+          });
+
+          const keys = getCasingVariants(key, matchedDef?.name);
+          attrAndConditions.push({
+            OR: keys.map((k) => ({
+              attributes: { path: [k], equals: val },
+            })),
+          });
+        }
+        variantWhere.AND = attrAndConditions;
       }
 
       if (Object.keys(variantWhere).length > 0) {
@@ -120,9 +157,22 @@ export class ProductsService {
       const mappedItems = items.map((product) => {
         const mappedVariants = product.variants.map((v) => {
           const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+          
+          const rawAttrs = (v.attributes as Record<string, any>) || {};
+          const normalizedAttrs: Record<string, any> = {};
+          for (const [attrKey, attrVal] of Object.entries(rawAttrs)) {
+            try {
+              normalizedAttrs[normalizeAttributeKey(attrKey)] = attrVal;
+            } catch {
+              const safeKey = attrKey.trim().toLowerCase().replace(/\s+/g, '_');
+              normalizedAttrs[safeKey] = attrVal;
+            }
+          }
+
           return {
             ...v,
             availableStock,
+            attributes: normalizedAttrs,
           };
         });
         return {
@@ -150,6 +200,7 @@ export class ProductsService {
     });
 
     await this.cache.set(cacheKey, result, 300);
+    await this.cache.sadd(`tenant:${tenantId}:product-keys`, cacheKey);
     return result;
   }
 
@@ -188,9 +239,22 @@ export class ProductsService {
 
     const mappedVariants = product.variants.map((v) => {
       const availableStock = Math.max(0, v.stockLevels?.reduce((sum, sl) => sum + (sl.quantityPhysical - sl.quantityReserved), 0) ?? 0);
+      
+      const rawAttrs = (v.attributes as Record<string, any>) || {};
+      const normalizedAttrs: Record<string, any> = {};
+      for (const [key, value] of Object.entries(rawAttrs)) {
+        try {
+          normalizedAttrs[normalizeAttributeKey(key)] = value;
+        } catch {
+          const safeKey = key.trim().toLowerCase().replace(/\s+/g, '_');
+          normalizedAttrs[safeKey] = value;
+        }
+      }
+
       return {
         ...v,
         availableStock,
+        attributes: normalizedAttrs,
       };
     });
 
@@ -200,6 +264,7 @@ export class ProductsService {
     };
 
     await this.cache.set(cacheKey, mappedProduct, 300);
+    await this.cache.sadd(`tenant:${tenantId}:product-keys`, cacheKey);
     return mappedProduct;
   }
 
@@ -217,6 +282,14 @@ export class ProductsService {
     tenantId: string;
     categoryIds?: string[];
   }) {
+    const categoryIds = data.categoryIds || [];
+    const validatedAttributes = await this.attributeValidation.validateAttributes(
+      data.tenantId,
+      categoryIds,
+      data.attributes,
+      false, // isVariant = false
+    );
+
     const result = await this.db.exec(async (tx) => {
       let storeId = data.storeId;
       const storeExists = storeId
@@ -263,7 +336,7 @@ export class ProductsService {
           metaDescription: data.metaDescription,
           titleTranslations: data.titleTranslations,
           descriptionTranslations: data.descriptionTranslations,
-          attributes: data.attributes,
+          attributes: validatedAttributes,
           isPublished: data.isPublished ?? false,
         },
       });
@@ -309,7 +382,7 @@ export class ProductsService {
       return product;
     });
 
-    await this.cache.invalidatePattern(`tenant:${data.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${data.tenantId}:product-keys`);
     return result;
   }
 
@@ -325,9 +398,26 @@ export class ProductsService {
       descriptionTranslations?: any;
       attributes?: any;
       isPublished?: boolean;
+      categoryIds?: string[];
     }
   ) {
     const product = await this.findById(id);
+
+    const finalCategoryIds = data.categoryIds !== undefined
+      ? data.categoryIds
+      : (product.categories || []).map((c: any) => c.categoryId);
+
+    let validatedAttributes = data.attributes;
+    if (data.attributes !== undefined || data.categoryIds !== undefined) {
+      const attrsToValidate = data.attributes !== undefined ? data.attributes : (product.attributes as Record<string, any> || {});
+      validatedAttributes = await this.attributeValidation.validateAttributes(
+        product.tenantId,
+        finalCategoryIds,
+        attrsToValidate,
+        false, // isVariant = false
+      );
+    }
+
     const result = await this.db.exec(async (tx) => {
       if (data.brandId) {
         const brand = await tx.brand.findFirst({
@@ -335,6 +425,22 @@ export class ProductsService {
         });
         if (!brand) {
           throw new NotFoundException(`Brand with ID ${data.brandId} not found`);
+        }
+      }
+
+      if (data.categoryIds && data.categoryIds.length > 0) {
+        const validCategories = await tx.category.findMany({
+          where: {
+            id: { in: data.categoryIds },
+            tenantId: product.tenantId,
+          },
+          select: { id: true },
+        });
+
+        const validIds = validCategories.map(c => c.id);
+        const invalidIds = data.categoryIds.filter(id => !validIds.includes(id));
+        if (invalidIds.length > 0) {
+          throw new NotFoundException(`Categories not found or unauthorized: ${invalidIds.join(', ')}`);
         }
       }
 
@@ -347,10 +453,23 @@ export class ProductsService {
           metaDescription: data.metaDescription,
           titleTranslations: data.titleTranslations,
           descriptionTranslations: data.descriptionTranslations,
-          attributes: data.attributes,
+          attributes: validatedAttributes,
           isPublished: data.isPublished,
         },
       });
+
+      if (data.categoryIds !== undefined) {
+        await tx.categoriesOnProducts.deleteMany({ where: { productId: id } });
+        if (data.categoryIds.length > 0) {
+          await tx.categoriesOnProducts.createMany({
+            data: data.categoryIds.map(categoryId => ({
+              tenantId: product.tenantId,
+              productId: id,
+              categoryId,
+            })),
+          });
+        }
+      }
 
       if (data.imageUrls && data.imageUrls.length > 0) {
         await tx.productImage.deleteMany({ where: { productId: id } });
@@ -370,7 +489,7 @@ export class ProductsService {
       return updated;
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -427,7 +546,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${tenantId}:product-keys`);
     return result;
   }
 
@@ -463,7 +582,7 @@ export class ProductsService {
       return { success: true, deletedId: imageId };
     });
 
-    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${tenantId}:product-keys`);
     return result;
   }
 
@@ -507,7 +626,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${tenantId}:product-keys`);
     return result;
   }
 
@@ -522,7 +641,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -547,6 +666,13 @@ export class ProductsService {
     }
   ) {
     const product = await this.findById(productId);
+    const categoryIds = (product.categories || []).map((c: any) => c.categoryId);
+    const validatedAttributes = await this.attributeValidation.validateAttributes(
+      data.tenantId,
+      categoryIds,
+      data.attributes,
+      true, // isVariant = true
+    );
 
     const result = await this.db.exec(async (tx) => {
       // Check SKU uniqueness per tenant
@@ -581,12 +707,12 @@ export class ProductsService {
           isActive: data.isActive ?? true,
           position: data.position ?? 0,
           dimensions: data.dimensions ? (data.dimensions as any) : undefined,
-          attributes: data.attributes ? (data.attributes as any) : undefined,
+          attributes: validatedAttributes ? (validatedAttributes as any) : undefined,
         },
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -610,6 +736,16 @@ export class ProductsService {
     }
   ) {
     const product = await this.findById(productId);
+    let validatedAttributes: Record<string, any> | undefined = undefined;
+    if (data.attributes !== undefined) {
+      const categoryIds = (product.categories || []).map((c: any) => c.categoryId);
+      validatedAttributes = await this.attributeValidation.validateAttributes(
+        data.tenantId,
+        categoryIds,
+        data.attributes,
+        true, // isVariant = true
+      );
+    }
 
     const result = await this.db.exec(async (tx) => {
       const variant = await tx.productVariant.findFirst({
@@ -651,12 +787,12 @@ export class ProductsService {
           isActive: data.isActive,
           position: data.position,
           dimensions: data.dimensions !== undefined ? (data.dimensions as any) : undefined,
-          attributes: data.attributes !== undefined ? (data.attributes as any) : undefined,
+          attributes: validatedAttributes !== undefined ? (validatedAttributes as any) : undefined,
         },
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -676,7 +812,7 @@ export class ProductsService {
       });
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 
@@ -690,9 +826,15 @@ export class ProductsService {
     }
   ) {
     const product = await this.findById(productId);
+    const categoryIds = (product.categories || []).map((c: any) => c.categoryId);
+    const normalizedOptions = await this.attributeValidation.validateMatrixOptions(
+      data.tenantId,
+      categoryIds,
+      data.options,
+    );
 
-    const optionKeys = Object.keys(data.options);
-    const optionValues = Object.values(data.options);
+    const optionKeys = Object.keys(normalizedOptions);
+    const optionValues = Object.values(normalizedOptions);
     if (optionValues.length === 0) {
       throw new BadRequestException('No options provided for variant matrix generation');
     }
@@ -743,7 +885,7 @@ export class ProductsService {
       return createdVariants;
     });
 
-    await this.cache.invalidatePattern(`tenant:${product.tenantId}:product`);
+    await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
     return result;
   }
 }

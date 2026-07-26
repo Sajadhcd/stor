@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsOptional, IsString, IsBoolean, IsNumber } from 'class-validator';
 import { PaginationQueryDto } from '../../../../common/dto/pagination-query.dto.js';
+import { normalizeAttributeKey } from '../attribute-definitions/attribute-key.util.js';
 
 export class ProductQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ example: 'store-uuid', description: 'Filter products by store UUID' })
@@ -59,14 +60,26 @@ export class ProductQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ description: 'Filter by attribute key-value pairs (JSON or object)' })
   @IsOptional()
   @Transform(({ value }) => {
+    let parsed: any;
     if (typeof value === 'string') {
       try {
-        return JSON.parse(value);
+        parsed = JSON.parse(value);
       } catch {
         return undefined;
       }
+    } else {
+      parsed = value;
     }
-    return value;
+
+    if (parsed && typeof parsed === 'object') {
+      const normalized: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        const normKey = normalizeAttributeKey(k);
+        normalized[normKey] = String(v);
+      }
+      return normalized;
+    }
+    return parsed;
   })
   attributes?: Record<string, string>;
 }
