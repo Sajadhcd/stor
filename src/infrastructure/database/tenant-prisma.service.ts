@@ -84,4 +84,15 @@ export class TenantPrismaService implements OnModuleInit, OnModuleDestroy {
       },
     );
   }
+
+  /**
+   * Helper for background workers to establish a tenant context and execute a transaction.
+   * This is required because background workers do not have a request context by default.
+   */
+  async runAsTenant<T>(tenantId: string, fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return requestContextStorage.run(
+      { tenantId, requestId: 'worker', correlationId: 'worker' },
+      () => this.exec(fn)
+    );
+  }
 }

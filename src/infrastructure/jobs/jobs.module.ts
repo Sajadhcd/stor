@@ -23,6 +23,9 @@ import { DefaultQueueWorker } from './default.worker.js';
     BullModule.registerQueue({
       name: 'default_queue',
     }),
+    BullModule.registerQueue({
+      name: 'search_indexing_queue',
+    }),
   ],
   providers: [QueuePublisherService, DefaultQueueWorker],
   exports: [QueuePublisherService, BullModule],
