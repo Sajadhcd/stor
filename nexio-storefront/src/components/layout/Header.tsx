@@ -1,80 +1,124 @@
-'use client';
-
 import Link from 'next/link';
-import { ShoppingBag, Search, Store, ShieldCheck, Heart, User, Truck } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Search, Store, ShieldCheck, Truck, User } from 'lucide-react';
+import { CartButton } from './CartButton';
+import { MobileNav } from './MobileNav';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 export function Header() {
-  const [cartCount, setCartCount] = useState(0);
-
-  useEffect(() => {
-    const updateCount = () => {
-      const saved = localStorage.getItem('nexio_cart');
-      if (saved) {
-        try {
-          const items = JSON.parse(saved);
-          const count = items.reduce((sum: number, item: any) => sum + (item.quantity || 1), 0);
-          setCartCount(count);
-        } catch {
-          setCartCount(0);
-        }
-      }
-    };
-    updateCount();
-    window.addEventListener('storage', updateCount);
-    return () => window.removeEventListener('storage', updateCount);
-  }, []);
-
   return (
-    <header className="bg-slate-900 text-white sticky top-0 z-40 shadow-xl border-b border-slate-800">
+    <header className="bg-background sticky top-0 z-40 border-b shadow-sm">
       {/* Top Banner */}
-      <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-slate-950 font-black text-center py-2 px-4 text-xs flex items-center justify-center gap-2">
-        <ShieldCheck className="w-4 h-4 text-slate-950" />
-        <span>شحن سريع لجميع محافظات العراق الـ 18 (بغداد، البصرة، أربيل، النجف) - الدفع عند الاستلام أو زين كاش وكي كارد</span>
+      <div className="bg-primary text-primary-foreground font-semibold text-center py-2 px-4 text-xs flex items-center justify-center gap-2">
+        <ShieldCheck className="w-4 h-4" />
+        <span>شحن سريع لجميع محافظات العراق الـ 18 - الدفع عند الاستلام أو زين كاش</span>
       </div>
 
       {/* Main Header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-6">
-        {/* Brand Logo */}
-        <Link href="/" className="flex items-center gap-3 group">
-          <div className="p-2.5 bg-gradient-to-tr from-emerald-500 to-teal-400 rounded-xl shadow-lg shadow-emerald-500/30 group-hover:scale-105 transition-transform">
-            <Store className="w-6 h-6 text-slate-950" />
-          </div>
-          <div>
-            <span className="text-xl font-extrabold tracking-tight text-white block">Nexio Store</span>
-            <span className="text-[10px] text-emerald-400 font-semibold block -mt-1">المتجر العراقي المباشر</span>
-          </div>
-        </Link>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center gap-4 md:gap-8 justify-between">
+        {/* Mobile Nav Trigger & Brand */}
+        <div className="flex items-center gap-2 md:gap-4">
+          <MobileNav />
+          <Link
+            href="/"
+            className="flex items-center gap-2 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md p-1"
+            aria-label="الرئيسية Nexio Store"
+          >
+            <div className="p-2 bg-primary text-primary-foreground rounded-lg shadow-sm group-hover:bg-primary/90 transition-colors">
+              <Store className="w-5 h-5" />
+            </div>
+            <div className="hidden sm:block">
+              <span className="text-lg font-extrabold tracking-tight text-foreground block leading-none">
+                Nexio Store
+              </span>
+              <span className="text-[10px] text-muted-foreground font-medium block mt-1 leading-none">
+                المتجر العراقي المباشر
+              </span>
+            </div>
+          </Link>
+        </div>
 
-        {/* Navigation Links */}
-        <nav className="hidden md:flex items-center gap-8 text-sm font-bold">
-          <Link href="/" className="text-slate-200 hover:text-emerald-400 transition-colors">الرئيسية</Link>
-          <Link href="/products" className="text-slate-200 hover:text-emerald-400 transition-colors">المنتجات والتصنيفات</Link>
-          <Link href="/track-order" className="text-slate-200 hover:text-emerald-400 transition-colors flex items-center gap-1.5">
-            <Truck className="w-4 h-4 text-emerald-400" />
+        {/* Desktop Navigation */}
+        <nav className="hidden lg:flex items-center gap-6 text-sm font-semibold">
+          <Link
+            href="/products"
+            className="text-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1"
+          >
+            المنتجات
+          </Link>
+          <Link
+            href="/track-order"
+            className="text-foreground hover:text-primary transition-colors flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1"
+          >
+            <Truck className="w-4 h-4 text-muted-foreground" />
             <span>تتبع الطلب</span>
           </Link>
-          <Link href="/account" className="text-slate-200 hover:text-emerald-400 transition-colors flex items-center gap-1.5">
-            <User className="w-4 h-4 text-indigo-400" />
-            <span>حسابي والأقساط</span>
+          <Link
+            href="/account"
+            className="text-foreground hover:text-primary transition-colors flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm px-1"
+          >
+            <User className="w-4 h-4 text-muted-foreground" />
+            <span>حسابي</span>
           </Link>
         </nav>
 
-        {/* Action Icons */}
-        <div className="flex items-center gap-4">
-          <Link
-            href="/cart"
-            className="flex items-center gap-2.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-emerald-600/30 transition-all relative"
+        {/* Actions (Search + Cart) */}
+        <div className="flex items-center gap-2 flex-1 justify-end">
+          {/* Accessible Search Form */}
+          <form
+            action="/products"
+            method="GET"
+            className="hidden md:flex relative max-w-sm w-full items-center"
+            role="search"
           >
-            <ShoppingBag className="w-4 h-4 text-slate-950" />
-            <span>السلة</span>
-            {cartCount > 0 && (
-              <span className="w-5 h-5 bg-slate-950 text-emerald-400 font-bold rounded-full flex items-center justify-center text-[10px]">
-                {cartCount}
-              </span>
-            )}
-          </Link>
+            <Input
+              type="search"
+              name="search"
+              placeholder="ابحث عن منتج..."
+              className="pe-11 h-11 bg-muted/50 focus-visible:bg-background"
+              aria-label="البحث عن منتجات"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              variant="ghost"
+              className="absolute end-0 h-11 w-11 text-muted-foreground hover:bg-transparent"
+              aria-label="تنفيذ البحث"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+          </form>
+
+          {/* Client-side Cart Integration */}
+          <CartButton />
         </div>
+      </div>
+
+      {/* Mobile Search Bar - Visible only on small screens */}
+      <div className="md:hidden px-4 pb-3">
+        <form
+          action="/products"
+          method="GET"
+          className="relative w-full flex items-center"
+          role="search"
+        >
+          <Input
+            type="search"
+            name="search"
+            placeholder="ابحث عن منتج..."
+            className="pe-11 h-11 bg-muted/50"
+            aria-label="البحث عن منتجات"
+          />
+          <Button
+            type="submit"
+            size="icon"
+            variant="ghost"
+            className="absolute end-0 h-11 w-11 text-muted-foreground hover:bg-transparent"
+            aria-label="تنفيذ البحث"
+          >
+            <Search className="h-4 w-4" />
+          </Button>
+        </form>
       </div>
     </header>
   );
