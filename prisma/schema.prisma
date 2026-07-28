@@ -276,6 +276,7 @@ model Product {
   deletedAt               DateTime? @map("deleted_at") @db.Timestamptz
   createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  tsvSearch               Unsupported("tsvector")? @map("tsv_search")
 
   tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   store  Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -627,7 +628,7 @@ model ShipmentTrackingHistory {
 
 model AuditLog {
   id        BigInt   @id @default(autoincrement())
-  tenantId  String   @map("tenant_id") @db.Uuid
+  tenantId  String?  @map("tenant_id") @db.Uuid
   userId    String?  @map("user_id") @db.Uuid
   action    String   @db.VarChar(100)
   tableName String   @map("table_name") @db.VarChar(100)
@@ -638,7 +639,7 @@ model AuditLog {
   userAgent String?  @map("user_agent") @db.VarChar(512)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, tableName, rowId])
   @@map("audit_logs")
