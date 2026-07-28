@@ -6,6 +6,7 @@ import { Queue } from 'bullmq';
 export class QueuePublisherService {
   constructor(
     @InjectQueue('default_queue') private readonly defaultQueue: Queue,
+    @InjectQueue('search_indexing_queue') private readonly searchQueue: Queue,
   ) {}
 
   /**
@@ -13,6 +14,14 @@ export class QueuePublisherService {
    */
   async publishJob(name: string, data: any, opts?: any): Promise<string> {
     const job = await this.defaultQueue.add(name, data, opts);
+    return job.id || '';
+  }
+
+  /**
+   * Publishes a background job to the search indexing queue.
+   */
+  async publishSearchJob(name: string, data: any, opts?: any): Promise<string> {
+    const job = await this.searchQueue.add(name, data, opts);
     return job.id || '';
   }
 }

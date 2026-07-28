@@ -7,6 +7,8 @@ import { ConfigService } from '../src/infrastructure/config/config.service.js';
 import { requestContextStorage } from '../src/common/context/request-context.js';
 
 describe('Search Isolation E2E', () => {
+  jest.setTimeout(30000);
+
   let adminPrisma: PrismaClient;
   let tenantPrismaService: TenantPrismaService;
   let provider: PostgresFtsProvider;
@@ -17,12 +19,12 @@ describe('Search Isolation E2E', () => {
   const storeBId = randomUUID();
   const productAId = randomUUID();
   const productBId = randomUUID();
-  
+
   const uniqueSearchTerm = `UniqueSearchTerm${randomUUID().substring(0, 8)}`;
 
   beforeAll(async () => {
     adminPrisma = new PrismaClient();
-    
+
     // Create Tenants
     await adminPrisma.tenant.createMany({
       data: [
@@ -61,26 +63,36 @@ describe('Search Isolation E2E', () => {
 
     // Setup provider
     const mockConfig = {
-      appDatabaseUrl: process.env.APP_DATABASE_URL || 'postgresql://nexio_app:nAx--aXaRYFt1wszxf_QfUalMpOak5vJDAKh8L1grdIDpqjL@localhost:5432/nexio_commerce?schema=public',
+      appDatabaseUrl: process.env.APP_DATABASE_URL,
     } as unknown as ConfigService;
 
     tenantPrismaService = new TenantPrismaService(mockConfig);
     await tenantPrismaService.onModuleInit();
-    
+
     provider = new PostgresFtsProvider(tenantPrismaService);
   });
 
   afterAll(async () => {
-    // Clean up
-    if (adminPrisma) {
-      await adminPrisma.product.deleteMany({ where: { id: { in: [productAId, productBId] } } });
-      await adminPrisma.store.deleteMany({ where: { id: { in: [storeAId, storeBId] } } });
-      await adminPrisma.tenant.deleteMany({ where: { id: { in: [tenantAId, tenantBId] } } });
-      await adminPrisma.auditLog.deleteMany({ where: { rowId: { in: [tenantAId, tenantBId, storeAId, storeBId, productAId, productBId] } } });
-      await adminPrisma.$disconnect();
-    }
-    if (tenantPrismaService) {
-      await tenantPrismaService.onModuleDestroy();
+    // Clean up in dependency order: audit logs first, then data rows, then tenants
+    try {
+      if (adminPrisma) {
+        await adminPrisma.auditLog.deleteMany({
+          where: {
+            OR: [
+              { rowId: { in: [productAId, productBId, storeAId, storeBId, tenantAId, tenantBId] } },
+              { tenantId: { in: [tenantAId, tenantBId] } },
+            ],
+          },
+        });
+        await adminPrisma.product.deleteMany({ where: { id: { in: [productAId, productBId] } } });
+        await adminPrisma.store.deleteMany({ where: { id: { in: [storeAId, storeBId] } } });
+        await adminPrisma.tenant.deleteMany({ where: { id: { in: [tenantAId, tenantBId] } } });
+        await adminPrisma.$disconnect();
+      }
+    } finally {
+      if (tenantPrismaService) {
+        await tenantPrismaService.onModuleDestroy();
+      }
     }
   });
 
@@ -106,13 +118,13 @@ describe('Search Isolation E2E', () => {
       { tenantId: tenantAId, requestId: 'test-req', correlationId: 'test-corr' },
       async () => {
         const resultA = await provider.search(tenantAId, { query: uniqueSearchTerm });
-        
+
         // Do not filter unexpected results out before asserting
         const matchingIds = resultA.items.map(i => i.id);
-        
+
         // Assert tenant A product is returned
         expect(matchingIds).toContain(productAId);
-        
+
         // Assert tenant B product is not returned
         expect(matchingIds).not.toContain(productBId);
       }

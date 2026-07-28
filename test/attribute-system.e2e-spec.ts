@@ -5,6 +5,7 @@ import { AttributeDefinitionsController } from '../src/modules/commerce/catalog/
 import { AttributeDefinitionsService } from '../src/modules/commerce/catalog/attribute-definitions/attribute-definitions.service.js';
 import { ProductsController } from '../src/modules/commerce/catalog/products.controller.js';
 import { ProductsService } from '../src/modules/commerce/catalog/products.service.js';
+import { CatalogSearchRepository } from '../src/modules/commerce/catalog/repositories/catalog-search.repository.js';
 import { AttributeValidationService } from '../src/modules/commerce/catalog/attribute-definitions/attribute-validation.service.js';
 import { TenantPrismaService } from '../src/infrastructure/database/tenant-prisma.service.js';
 import { CacheService } from '../src/infrastructure/cache/cache.service.js';
@@ -12,6 +13,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '../src/infrastructure/config/config.service.js';
 import { AuthGuard } from '../src/security/guards/auth.guard.js';
 import { PermissionsGuard } from '../src/security/guards/permissions.guard.js';
+import { ProductSearchIndexRepository } from '../src/modules/commerce/search/repositories/product-search-index.repository.js';
+import { AppLogger } from '../src/infrastructure/logging/logger.service.js';
 import { AttributeType } from '@prisma/client';
 import { requestContextStorage } from '../src/common/context/request-context.js';
 
@@ -154,8 +157,16 @@ describe('Attribute System E2E Workflow', () => {
       controllers: [AttributeDefinitionsController, ProductsController],
       providers: [
         AttributeDefinitionsService,
-        ProductsService,
         AttributeValidationService,
+        ProductsService,
+        CatalogSearchRepository,
+        {
+          provide: ProductSearchIndexRepository,
+          useValue: {
+            refreshProductVector: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AppLogger, useValue: { error: jest.fn(), log: jest.fn(), warn: jest.fn() } },
         { provide: TenantPrismaService, useValue: mockDb },
         { provide: CacheService, useValue: mockCache },
         {

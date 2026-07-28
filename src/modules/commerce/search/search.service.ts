@@ -4,7 +4,7 @@ import type { SearchProvider, SearchOptions, SearchResult } from './providers/se
 
 /**
  * SearchService mediates search requests to the active search provider.
- * 
+ *
  * Note: Write-path synchronization (automatic updates of search vectors
  * on product modifications) is scheduled to be implemented in Phase C1-B2.
  * Currently, updates should be triggered manually via `refreshProductVector`

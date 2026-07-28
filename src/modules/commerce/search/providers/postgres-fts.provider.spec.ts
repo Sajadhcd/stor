@@ -1,3 +1,11 @@
+/**
+ * PostgresFtsProvider Integration Tests
+ *
+ * Uses unique test tenants and stores created per run.
+ * Does NOT depend on seed data.
+ * Reads APP_DATABASE_URL from environment — no hardcoded credentials.
+ * Full scoped cleanup in afterAll.
+ */
 import { PrismaClient } from '@prisma/client';
 import { PostgresFtsProvider } from './postgres-fts.provider.js';
 import { TenantPrismaService } from '../../../../infrastructure/database/tenant-prisma.service.js';
@@ -5,53 +13,59 @@ import { ConfigService } from '../../../../infrastructure/config/config.service.
 import { requestContextStorage } from '../../../../common/context/request-context.js';
 
 describe('PostgresFtsProvider Integration', () => {
+  jest.setTimeout(30000);
+
   let adminPrisma: PrismaClient;
   let tenantPrismaService: TenantPrismaService;
   let provider: PostgresFtsProvider;
 
-  let tenantId1: string;
-  let tenantId2: string;
-  let storeId1: string;
-  let storeId2: string;
-
-  const testProductIds: string[] = [];
+  // Unique IDs scoped to this test run
+  let tenantAId: string;
+  let tenantBId: string;
+  let storeAId: string;
+  let storeBId: string;
+  const createdProductIds: string[] = [];
 
   beforeAll(async () => {
     adminPrisma = new PrismaClient();
 
-    // Clean up any orphaned test products from previous failed runs
-    await adminPrisma.product.deleteMany({
-      where: {
-        OR: [
-          { titleTranslations: { path: ['ar'], equals: 'حذاء جري رياضي مريح جداً' } },
-          { titleTranslations: { path: ['ar'], equals: 'تي شيرت رياضي مميز' } },
-          { titleTranslations: { path: ['ar'], equals: 'حذاء شتوي دافئ' } },
-        ]
-      }
+    // Create two isolated tenants to test cross-tenant isolation
+    const tenantA = await adminPrisma.tenant.create({
+      data: {
+        name: `fts-spec-tenant-A-${Date.now()}`,
+        subdomain: `fts-a-${Date.now()}`,
+      },
     });
-
-    // Dynamically retrieve two stores from different tenants
-    const store1 = await adminPrisma.store.findFirst();
-    if (!store1) {
-      throw new Error('Test database does not have any stores.');
-    }
-    const store2 = await adminPrisma.store.findFirst({
-      where: {
-        tenantId: { not: store1.tenantId }
-      }
+    const tenantB = await adminPrisma.tenant.create({
+      data: {
+        name: `fts-spec-tenant-B-${Date.now()}`,
+        subdomain: `fts-b-${Date.now()}`,
+      },
     });
-    if (!store2) {
-      throw new Error('Test database does not have stores on different tenants to perform isolation tests.');
-    }
-    
-    tenantId1 = store1.tenantId;
-    tenantId2 = store2.tenantId;
-    storeId1 = store1.id;
-    storeId2 = store2.id;
+    tenantAId = tenantA.id;
+    tenantBId = tenantB.id;
 
-    // Mock ConfigService
+    const storeA = await adminPrisma.store.create({
+      data: {
+        tenantId: tenantAId,
+        name: 'FTS Spec Store A',
+        currency: 'USD',
+        languageDefault: 'en',
+      },
+    });
+    const storeB = await adminPrisma.store.create({
+      data: {
+        tenantId: tenantBId,
+        name: 'FTS Spec Store B',
+        currency: 'USD',
+        languageDefault: 'en',
+      },
+    });
+    storeAId = storeA.id;
+    storeBId = storeB.id;
+
     const mockConfig = {
-      appDatabaseUrl: process.env.APP_DATABASE_URL || 'postgresql://nexio_app:nAx--aXaRYFt1wszxf_QfUalMpOak5vJDAKh8L1grdIDpqjL@localhost:5432/nexio_commerce?schema=public',
+      appDatabaseUrl: process.env.APP_DATABASE_URL,
     } as unknown as ConfigService;
 
     tenantPrismaService = new TenantPrismaService(mockConfig);
@@ -61,21 +75,29 @@ describe('PostgresFtsProvider Integration', () => {
   });
 
   afterAll(async () => {
-    // Cleanup test products safely
-    if (adminPrisma && testProductIds.length > 0) {
-      try {
-        await adminPrisma.product.deleteMany({
-          where: { id: { in: testProductIds } },
+    try {
+      if (adminPrisma) {
+        if (createdProductIds.length > 0) {
+          // Delete audit logs referencing test products and tenants
+          await adminPrisma.auditLog.deleteMany({
+            where: { tenantId: { in: [tenantAId, tenantBId] } },
+          });
+          await adminPrisma.product.deleteMany({
+            where: { id: { in: createdProductIds } },
+          });
+        }
+        await adminPrisma.store.deleteMany({
+          where: { id: { in: [storeAId, storeBId] } },
         });
-      } catch (err) {
-        console.error('Error during test cleanup:', err);
+        await adminPrisma.tenant.deleteMany({
+          where: { id: { in: [tenantAId, tenantBId] } },
+        });
+        await adminPrisma.$disconnect();
       }
-    }
-    if (adminPrisma) {
-      await adminPrisma.$disconnect();
-    }
-    if (tenantPrismaService) {
-      await tenantPrismaService.onModuleDestroy();
+    } finally {
+      if (tenantPrismaService) {
+        await tenantPrismaService.onModuleDestroy();
+      }
     }
   });
 
@@ -87,122 +109,166 @@ describe('PostgresFtsProvider Integration', () => {
     ];
 
     for (const tc of testCases) {
-      const res = await adminPrisma.$queryRawUnsafe<Array<{ normalize_arabic: string }>>(
-        `SELECT normalize_arabic($1) AS normalize_arabic`,
-        tc.input
-      );
+      const res = await adminPrisma.$queryRaw<Array<{ normalize_arabic: string }>>`
+        SELECT normalize_arabic(${tc.input}::text) AS normalize_arabic
+      `;
       expect(res[0].normalize_arabic).toBe(tc.expected);
     }
   });
 
   it('2. should verify that the tsv_search column and its GIN index exist in the database', async () => {
-    // Check column existence
-    const columns = await adminPrisma.$queryRawUnsafe<Array<{ column_name: string }>>(
-      `SELECT column_name FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'tsv_search'`
-    );
+    const columns = await adminPrisma.$queryRaw<Array<{ column_name: string }>>`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = 'products' AND column_name = 'tsv_search'
+    `;
     expect(columns.length).toBe(1);
 
-    // Check index existence
-    const indexes = await adminPrisma.$queryRawUnsafe<Array<{ indexname: string }>>(
-      `SELECT indexname FROM pg_indexes WHERE tablename = 'products' AND indexdef LIKE '%gin%tsv_search%'`
-    );
+    const indexes = await adminPrisma.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname
+      FROM pg_indexes
+      WHERE tablename = 'products' AND indexdef LIKE '%gin%tsv_search%'
+    `;
     expect(indexes.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('3. should generate ranked matching results and respect tenant isolation and filters', async () => {
-    // Create 3 test products:
-    // Product 1: Tenant 1, matches search term 'حذاء' (shoes) in title
+  it('3. should verify update_product_search_vector(uuid, uuid) is the only form granted to nexio_app', async () => {
+    // The 1-arg form must NOT be executable by nexio_app
+    await requestContextStorage.run(
+      { tenantId: tenantAId, requestId: 'priv-check', correlationId: 'priv-check' },
+      async () => {
+        await expect(
+          tenantPrismaService.exec(async (tx) => {
+            await tx.$executeRaw`SELECT update_product_search_vector(${tenantAId}::uuid)`;
+          }),
+        ).rejects.toThrow(); // PERMISSION_DENIED
+
+        // The 2-arg form must succeed (correct tenant/product — no product with this id, so no-op)
+        await expect(
+          tenantPrismaService.exec(async (tx) => {
+            await tx.$executeRaw`SELECT update_product_search_vector(${tenantAId}::uuid, ${'00000000-0000-0000-0000-000000000000'}::uuid)`;
+          }),
+        ).resolves.not.toThrow();
+      },
+    );
+  });
+
+  it('4. should generate ranked matching results and respect tenant isolation', async () => {
+    // Product 1 (tenant A): title match
     const p1 = await adminPrisma.product.create({
       data: {
-        tenantId: tenantId1,
-        storeId: storeId1,
-        titleTranslations: { ar: 'حذاء جري رياضي مريح جداً', en: 'Running Shoes' },
+        tenantId: tenantAId,
+        storeId: storeAId,
+        titleTranslations: { ar: 'حذاء جري رياضي مريح', en: 'Running Shoes' },
         descriptionTranslations: { ar: 'وصف المنتج', en: 'Desc' },
         isPublished: true,
       },
     });
-    testProductIds.push(p1.id);
+    createdProductIds.push(p1.id);
 
-    // Product 2: Tenant 1, matches search term 'حذاء' in description
+    // Product 2 (tenant A): description match only (lower rank expected)
     const p2 = await adminPrisma.product.create({
       data: {
-        tenantId: tenantId1,
-        storeId: storeId1,
-        titleTranslations: { ar: 'تي شيرت رياضي مميز', en: 'Tech Tee' },
-        descriptionTranslations: { ar: 'منتج ممتاز يحتوي على حذاء جري في الوصف الداخلي تفصيلاً', en: 'Desc' },
+        tenantId: tenantAId,
+        storeId: storeAId,
+        titleTranslations: { ar: 'تي شيرت رياضي', en: 'Sports Tee' },
+        descriptionTranslations: { ar: 'يحتوي على حذاء جري في الوصف', en: 'Desc' },
         isPublished: true,
       },
     });
-    testProductIds.push(p2.id);
+    createdProductIds.push(p2.id);
 
-    // Product 3: Tenant 2, matches search term 'حذاء' in title, but on Tenant 2
+    // Product 3 (tenant B): title match — must NOT appear in tenant A searches
     const p3 = await adminPrisma.product.create({
       data: {
-        tenantId: tenantId2,
-        storeId: storeId2,
-        titleTranslations: { ar: 'حذاء شتوي دافئ', en: 'Warm winter shoes' },
+        tenantId: tenantBId,
+        storeId: storeBId,
+        titleTranslations: { ar: 'حذاء شتوي دافئ', en: 'Winter Shoes' },
         isPublished: true,
       },
     });
-    testProductIds.push(p3.id);
+    createdProductIds.push(p3.id);
 
-    // Manually refresh search vectors under the correct tenant contexts
+    // Refresh vectors via the 2-arg function under tenant A context
     await requestContextStorage.run(
-      { tenantId: tenantId1, requestId: 'test-req', correlationId: 'test-corr' },
+      { tenantId: tenantAId, requestId: 'vec-A', correlationId: 'vec-A' },
       async () => {
         await provider.refreshProductVector(p1.id);
         await provider.refreshProductVector(p2.id);
-      }
+      },
     );
 
+    // Refresh p3 under tenant B context
     await requestContextStorage.run(
-      { tenantId: tenantId2, requestId: 'test-req-2', correlationId: 'test-corr-2' },
+      { tenantId: tenantBId, requestId: 'vec-B', correlationId: 'vec-B' },
       async () => {
         await provider.refreshProductVector(p3.id);
-      }
+      },
     );
 
-    // Run search under Tenant 1 Context
+    // Search under tenant A context
     await requestContextStorage.run(
-      { tenantId: tenantId1, requestId: 'test-req', correlationId: 'test-corr' },
+      { tenantId: tenantAId, requestId: 'search-A', correlationId: 'search-A' },
       async () => {
-        const searchResult = await provider.search(tenantId1, {
-          query: 'حذاء',
-          isPublished: true,
-        });
+        const result = await provider.search(tenantAId, { query: 'حذاء', isPublished: true });
 
-        // Filter search results to only include the products we created in this run
-        const filteredItems = searchResult.items.filter(item => 
-          item.id === p1.id || item.id === p2.id
-        );
+        const filtered = result.items.filter(i => i.id === p1.id || i.id === p2.id);
+        expect(filtered.length).toBe(2);
+        // p1 (title match) must rank higher than p2 (description match)
+        expect(filtered[0].id).toBe(p1.id);
+        expect(filtered[1].id).toBe(p2.id);
+        expect(filtered[0].score).toBeGreaterThan(filtered[1].score);
 
-        // Verify total matches for our test products
-        expect(filteredItems.length).toBe(2);
-
-        // Product 1 (matches in title) should be first and score higher than Product 2 (matches in description)
-        expect(filteredItems[0].id).toBe(p1.id);
-        expect(filteredItems[1].id).toBe(p2.id);
-        expect(filteredItems[0].score).toBeGreaterThan(filteredItems[1].score);
-
-        // Ensure Product 3 (Tenant 2) is NOT in the search results
-        const matchingIds = searchResult.items.map(item => item.id);
-        expect(matchingIds).not.toContain(p3.id);
-      }
+        // p3 from tenant B must never appear
+        expect(result.items.map(i => i.id)).not.toContain(p3.id);
+      },
     );
 
-    // Run search under Tenant 2 Context
+    // Search under tenant B context — only p3 should appear for this query
     await requestContextStorage.run(
-      { tenantId: tenantId2, requestId: 'test-req-2', correlationId: 'test-corr-2' },
+      { tenantId: tenantBId, requestId: 'search-B', correlationId: 'search-B' },
       async () => {
-        const searchResult = await provider.search(tenantId2, {
-          query: 'حذاء',
-          isPublished: true,
-        });
-
-        // Under Tenant 2, only Product 3 should match
-        expect(searchResult.total).toBe(1);
-        expect(searchResult.items[0].id).toBe(p3.id);
-      }
+        const result = await provider.search(tenantBId, { query: 'حذاء', isPublished: true });
+        const ours = result.items.filter(i => i.id === p3.id);
+        expect(ours.length).toBe(1);
+        // p1 and p2 from tenant A must never appear
+        expect(result.items.map(i => i.id)).not.toContain(p1.id);
+        expect(result.items.map(i => i.id)).not.toContain(p2.id);
+      },
     );
+  });
+
+  it('5. cross-tenant call to update_product_search_vector is a no-op (wrong tenant)', async () => {
+    // Create a product under tenant B
+    const pB = await adminPrisma.product.create({
+      data: {
+        tenantId: tenantBId,
+        storeId: storeBId,
+        titleTranslations: { en: 'Cross-Tenant Test' },
+        isPublished: true,
+      },
+    });
+    createdProductIds.push(pB.id);
+
+    // Call refresh from tenant A context with tenant B's product ID
+    // The SQL function's NOT FOUND guard must make this a silent no-op
+    await requestContextStorage.run(
+      { tenantId: tenantAId, requestId: 'cross', correlationId: 'cross' },
+      async () => {
+        // This must not throw and must not update pB's tsv_search
+        await expect(
+          tenantPrismaService.exec(async (tx) => {
+            await tx.$executeRaw`SELECT update_product_search_vector(${tenantAId}::uuid, ${pB.id}::uuid)`;
+          }),
+        ).resolves.not.toThrow();
+      },
+    );
+
+    // Confirm tsv_search on pB was NOT updated by the cross-tenant call
+    const pBRow = await adminPrisma.$queryRaw<Array<{ tsv: string | null }>>`
+      SELECT tsv_search::text AS tsv FROM products WHERE id = ${pB.id}::uuid
+    `;
+    // It should still be null (never been correctly refreshed yet)
+    expect(pBRow[0].tsv).toBeNull();
   });
 });

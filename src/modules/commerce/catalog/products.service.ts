@@ -7,6 +7,8 @@ import { PaginatedResponseDto } from '../../../common/dto/paginated-response.dto
 import { ProductQueryDto } from './dto/product-query.dto.js';
 import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
 import { normalizeAttributeKey } from './attribute-definitions/attribute-key.util.js';
+import { CatalogSearchRepository } from './repositories/catalog-search.repository.js';
+import { ProductSearchIndexRepository } from '../search/repositories/product-search-index.repository.js';
 
 function getCasingVariants(key: string, originalDefName?: string): string[] {
   const variants = new Set<string>();
@@ -23,12 +25,15 @@ function getCasingVariants(key: string, originalDefName?: string): string[] {
   return Array.from(variants);
 }
 
+
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly db: TenantPrismaService,
     private readonly cache: CacheService,
     private readonly attributeValidation: AttributeValidationService,
+    private readonly catalogSearch: CatalogSearchRepository,
+    private readonly searchIndex: ProductSearchIndexRepository,
   ) {}
 
   private getTenantId(): string {
@@ -45,175 +50,210 @@ export class ProductsService {
     if (cached) return cached;
 
     const result = await this.db.exec(async (tx) => {
-      const where: Prisma.ProductWhereInput = {};
-      if (query?.storeId) {
-        where.storeId = query.storeId;
-      }
-      if (query?.isPublished !== undefined) {
-        where.isPublished = query.isPublished;
-      }
-      if (query?.search) {
-        const s = query.search.trim();
-        where.OR = [
-          { titleTranslations: { path: ['ar'], string_contains: s } },
-          { titleTranslations: { path: ['en'], string_contains: s } },
-          { descriptionTranslations: { path: ['ar'], string_contains: s } },
-          { descriptionTranslations: { path: ['en'], string_contains: s } },
-          { slug: { contains: s, mode: 'insensitive' } },
-          { brand: { name: { contains: s, mode: 'insensitive' } } },
-          { variants: { some: { sku: { contains: s, mode: 'insensitive' } } } },
-        ];
-      }
-      if (query?.categoryId) {
-        where.categories = { some: { categoryId: query.categoryId } };
-      }
-      if (query?.brandId) {
-        where.brandId = query.brandId;
-      }
-      if (query?.brandSlug) {
-        where.brand = { slug: query.brandSlug };
-      }
+      const take = query?.take || query?.limit || 20;
+      const skip = query?.skip || ((query?.page || 1) - 1) * take;
 
-      const variantWhere: Prisma.ProductVariantWhereInput = {};
-      if (query?.minPrice !== undefined || query?.maxPrice !== undefined) {
-        variantWhere.price = {};
-        if (query.minPrice !== undefined) variantWhere.price.gte = query.minPrice;
-        if (query.maxPrice !== undefined) variantWhere.price.lte = query.maxPrice;
-      }
-      if (query?.inStockOnly) {
-        variantWhere.stockLevels = {
-          some: {
-            quantityPhysical: { gt: 0 },
-          },
-        };
-      }
-      // Fetch active definitions for tenant to support legacy name casing matching
-      const definitions = await tx.attributeDefinition.findMany({
-        where: { tenantId },
-      });
-
-      if (query?.attributes && Object.keys(query.attributes).length > 0) {
-        const attrAndConditions = [];
-        for (const [key, val] of Object.entries(query.attributes)) {
-          const matchedDef = definitions.find((d) => {
-            try {
-              return normalizeAttributeKey(d.name) === key;
-            } catch {
-              return d.name.toLowerCase() === key;
-            }
-          });
-
-          const keys = getCasingVariants(key, matchedDef?.name);
-          attrAndConditions.push({
-            OR: keys.map((k) => ({
-              attributes: { path: [k], equals: val },
-            })),
-          });
-        }
-        variantWhere.AND = attrAndConditions;
-      }
-
-      if (Object.keys(variantWhere).length > 0) {
-        where.variants = { some: variantWhere };
-      }
-
-      where.deletedAt = null;
-
-      const take = query?.take || 20;
-      const skip = query?.skip || 0;
       let items: any[] = [];
       let total = 0;
 
-      if (query?.sortBy === 'price_asc' || query?.sortBy === 'price_desc') {
-        const matchedProducts = await tx.product.findMany({
-          where,
-          select: { id: true },
+      if (query?.search && query.search.trim() !== '') {
+        const definitions = await tx.attributeDefinition.findMany({
+          where: { tenantId },
         });
-        const productIds = matchedProducts.map((p) => p.id);
-        total = productIds.length;
 
-        if (productIds.length === 0) {
-          items = [];
-        } else {
-          const sortDir = query.sortBy === 'price_asc' ? 'ASC' : 'DESC';
-          const aggFunc = query.sortBy === 'price_asc' ? 'MIN' : 'MAX';
+        const ftsResult = await this.catalogSearch.searchRankedProductIds(
+          tx,
+          tenantId,
+          {
+            query: query.search,
+            storeId: query.storeId,
+            categoryId: query.categoryId,
+            brandId: query.brandId,
+            brandSlug: query.brandSlug,
+            isPublished: query.isPublished,
+            minPrice: query.minPrice,
+            maxPrice: query.maxPrice,
+            inStockOnly: query.inStockOnly,
+            attributes: query.attributes,
+            sortBy: query.sortBy,
+            sortOrder: query.sortOrder as 'asc' | 'desc',
+            take,
+            skip,
+          },
+          definitions
+        );
 
-          const placeholders = productIds.map((_, index) => `$${index + 1}`).join(', ');
-          const takeParamIndex = productIds.length + 1;
-          const skipParamIndex = productIds.length + 2;
+        total = ftsResult.total;
 
-          const rawQuery = `
-            SELECT p.id::text as id
-            FROM products p
-            LEFT JOIN product_variants pv ON p.id = pv.product_id
-            WHERE p.id IN (${placeholders})
-            GROUP BY p.id
-            ORDER BY ${aggFunc}(pv.price) ${sortDir}
-            LIMIT $${takeParamIndex} OFFSET $${skipParamIndex}
-          `;
-
-          const queryArgs = [...productIds, take, skip];
-          const sortedRows = await tx.$queryRawUnsafe<Array<{ id: string }>>(rawQuery, ...queryArgs);
-          const sortedIds = sortedRows.map((r) => r.id);
-
+        if (total > 0 && ftsResult.items.length > 0) {
+          const sortedIds = ftsResult.items.map(i => i.id);
           const dbItems = await tx.product.findMany({
             where: { id: { in: sortedIds } },
             include: {
               brand: true,
-              images: {
-                orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
-              },
-              variants: {
-                include: {
-                  stockLevels: true,
-                },
-              },
-              categories: {
-                include: {
-                  category: true,
-                },
-              },
+              images: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }] },
+              variants: { include: { stockLevels: true } },
+              categories: { include: { category: true } },
             },
           });
-
-          const itemsMap = new Map(dbItems.map((item) => [item.id, item]));
-          items = sortedIds.map((id) => itemsMap.get(id)).filter(Boolean);
+          const itemsMap = new Map(dbItems.map(item => [item.id, item]));
+          // preserve exact ordering and tolerate missing rows due to concurrent deletion
+          items = sortedIds.map(id => itemsMap.get(id)).filter(Boolean);
         }
       } else {
-        let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
-        if (query?.sortBy === 'created_at' || query?.sortBy === 'createdAt') {
-          orderBy = { createdAt: (query.sortOrder as Prisma.SortOrder) || 'desc' };
-        } else if (query?.sortBy && query.sortBy !== 'title') {
-          orderBy = { [query.sortBy]: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+        const where: Prisma.ProductWhereInput = {};
+        if (query?.storeId) {
+          where.storeId = query.storeId;
+        }
+        if (query?.isPublished !== undefined) {
+          where.isPublished = query.isPublished;
+        }
+        if (query?.categoryId) {
+          where.categories = { some: { categoryId: query.categoryId } };
+        }
+        if (query?.brandId) {
+          where.brandId = query.brandId;
+        }
+        if (query?.brandSlug) {
+          where.brand = { slug: query.brandSlug };
         }
 
-        const [dbItems, dbTotal] = await Promise.all([
-          tx.product.findMany({
-            where,
-            include: {
-              brand: true,
-              images: {
-                orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
-              },
-              variants: {
-                include: {
-                  stockLevels: true,
-                },
-              },
-              categories: {
-                include: {
-                  category: true,
-                },
-              },
+        const variantWhere: Prisma.ProductVariantWhereInput = {};
+        if (query?.minPrice !== undefined || query?.maxPrice !== undefined) {
+          variantWhere.price = {};
+          if (query.minPrice !== undefined) variantWhere.price.gte = query.minPrice;
+          if (query.maxPrice !== undefined) variantWhere.price.lte = query.maxPrice;
+        }
+        if (query?.inStockOnly) {
+          variantWhere.stockLevels = {
+            some: {
+              quantityPhysical: { gt: 0 },
             },
-            orderBy,
-            take,
-            skip,
-          }),
-          tx.product.count({ where }),
-        ]);
-        items = dbItems;
-        total = dbTotal;
+          };
+        }
+
+        const definitions = await tx.attributeDefinition.findMany({
+          where: { tenantId },
+        });
+
+        if (query?.attributes && Object.keys(query.attributes).length > 0) {
+          const attrAndConditions = [];
+          for (const [key, val] of Object.entries(query.attributes)) {
+            const matchedDef = definitions.find((d) => {
+              try {
+                return normalizeAttributeKey(d.name) === key;
+              } catch {
+                return d.name.toLowerCase() === key;
+              }
+            });
+
+            const keys = getCasingVariants(key, matchedDef?.name);
+            attrAndConditions.push({
+              OR: keys.map((k) => ({
+                attributes: { path: [k], equals: val },
+              })),
+            });
+          }
+          variantWhere.AND = attrAndConditions;
+        }
+
+        if (Object.keys(variantWhere).length > 0) {
+          where.variants = { some: variantWhere };
+        }
+
+        where.deletedAt = null;
+
+        if (query?.sortBy === 'price_asc' || query?.sortBy === 'price_desc') {
+          const matchedProducts = await tx.product.findMany({
+            where,
+            select: { id: true },
+          });
+          const productIds = matchedProducts.map((p) => p.id);
+          total = productIds.length;
+
+          if (productIds.length === 0) {
+            items = [];
+          } else {
+            const sortDir = query.sortBy === 'price_asc' ? 'ASC' : 'DESC';
+            const aggFunc = query.sortBy === 'price_asc' ? 'MIN' : 'MAX';
+
+            const placeholders = productIds.map((_, index) => `$${index + 1}`).join(', ');
+            const takeParamIndex = productIds.length + 1;
+            const skipParamIndex = productIds.length + 2;
+
+            const rawQuery = `
+              SELECT p.id::text as id
+              FROM products p
+              LEFT JOIN product_variants pv ON p.id = pv.product_id
+              WHERE p.id IN (${placeholders})
+              GROUP BY p.id
+              ORDER BY ${aggFunc}(pv.price) ${sortDir}
+              LIMIT $${takeParamIndex} OFFSET $${skipParamIndex}
+            `;
+
+            const queryArgs = [...productIds, take, skip];
+            const sortedRows = await tx.$queryRawUnsafe<Array<{ id: string }>>(rawQuery, ...queryArgs);
+            const sortedIds = sortedRows.map((r) => r.id);
+
+            const dbItems = await tx.product.findMany({
+              where: { id: { in: sortedIds } },
+              include: {
+                brand: true,
+                images: {
+                  orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+                },
+                variants: {
+                  include: {
+                    stockLevels: true,
+                  },
+                },
+                categories: {
+                  include: {
+                    category: true,
+                  },
+                },
+              },
+            });
+
+            const itemsMap = new Map(dbItems.map((item) => [item.id, item]));
+            items = sortedIds.map((id) => itemsMap.get(id)).filter(Boolean);
+          }
+        } else {
+          let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
+          if (query?.sortBy === 'created_at' || query?.sortBy === 'createdAt') {
+            orderBy = { createdAt: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+          } else if (query?.sortBy && query.sortBy !== 'title') {
+            orderBy = { [query.sortBy]: (query.sortOrder as Prisma.SortOrder) || 'desc' };
+          }
+
+          const [dbItems, dbTotal] = await Promise.all([
+            tx.product.findMany({
+              where,
+              include: {
+                brand: true,
+                images: {
+                  orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }],
+                },
+                variants: {
+                  include: {
+                    stockLevels: true,
+                  },
+                },
+                categories: {
+                  include: {
+                    category: true,
+                  },
+                },
+              },
+              orderBy,
+              take,
+              skip,
+            }),
+            tx.product.count({ where }),
+          ]);
+          items = dbItems;
+          total = dbTotal;
+        }
       }
 
       const mappedItems = items.map((product: any) => {
@@ -426,6 +466,9 @@ export class ProductsService {
         });
       }
 
+      // Refresh FTS vector inside the transaction — failure rolls back the entire create.
+      await this.searchIndex.refreshProductVector(tx, data.tenantId, product.id);
+
       return product;
     });
 
@@ -531,6 +574,18 @@ export class ProductsService {
             },
           });
         }
+      }
+
+      // Refresh FTS vector only when search-relevant fields changed.
+      // isPublished, categoryIds, imageUrls do not affect the tsvector.
+      const needsVectorRefresh =
+        data.titleTranslations !== undefined ||
+        data.descriptionTranslations !== undefined ||
+        data.slug !== undefined ||
+        data.brandId !== undefined;
+
+      if (needsVectorRefresh) {
+        await this.searchIndex.refreshProductVector(tx, product.tenantId, id);
       }
 
       return updated;
@@ -739,7 +794,7 @@ export class ProductsService {
         }
       }
 
-      return tx.productVariant.create({
+      const variant = await tx.productVariant.create({
         data: {
           tenantId: data.tenantId,
           productId,
@@ -757,6 +812,11 @@ export class ProductsService {
           attributes: validatedAttributes ? (validatedAttributes as any) : undefined,
         },
       });
+
+      // Refresh FTS vector after variant creation — new SKU must be indexed.
+      await this.searchIndex.refreshProductVector(tx, data.tenantId, productId);
+
+      return variant;
     });
 
     await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
@@ -820,7 +880,7 @@ export class ProductsService {
         }
       }
 
-      return tx.productVariant.update({
+      const updated = await tx.productVariant.update({
         where: { id: variantId },
         data: {
           sku: data.sku,
@@ -837,6 +897,18 @@ export class ProductsService {
           attributes: validatedAttributes !== undefined ? (validatedAttributes as any) : undefined,
         },
       });
+
+      // Refresh FTS vector only when SKU or isActive changed.
+      // Price, weight, cost, barcode, position, dimensions do not affect tsvector.
+      const needsVectorRefresh =
+        data.sku !== undefined ||
+        data.isActive !== undefined;
+
+      if (needsVectorRefresh) {
+        await this.searchIndex.refreshProductVector(tx, data.tenantId, productId);
+      }
+
+      return updated;
     });
 
     await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
@@ -854,9 +926,14 @@ export class ProductsService {
         throw new NotFoundException(`Variant with ID ${variantId} not found under product ${productId}`);
       }
 
-      return tx.productVariant.delete({
+      const deleted = await tx.productVariant.delete({
         where: { id: variantId },
       });
+
+      // Refresh FTS vector after hard delete — removed SKU must be cleared from index.
+      await this.searchIndex.refreshProductVector(tx, tenantId, productId);
+
+      return deleted;
     });
 
     await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
@@ -928,6 +1005,12 @@ export class ProductsService {
         });
         createdVariants.push(variant);
       }
+
+      // Refresh the FTS vector exactly once after all variants are created.
+      // Do not refresh per-variant — one call aggregates all SKUs atomically.
+      // If no new variants were created (all SKUs already exist), still refresh
+      // to ensure the vector is consistent with current state.
+      await this.searchIndex.refreshProductVector(tx, data.tenantId, productId);
 
       return createdVariants;
     });
