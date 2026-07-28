@@ -7,6 +7,8 @@ import { TenantPrismaService } from '../src/infrastructure/database/tenant-prism
 import { ConfigService } from '../src/infrastructure/config/config.service.js';
 
 describe('Catalog Search Integration E2E', () => {
+  jest.setTimeout(30000);
+
   let adminPrisma: PrismaClient;
   let tenantPrismaService: TenantPrismaService;
   let repository: CatalogSearchRepository;

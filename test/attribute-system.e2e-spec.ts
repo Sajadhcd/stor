@@ -13,6 +13,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '../src/infrastructure/config/config.service.js';
 import { AuthGuard } from '../src/security/guards/auth.guard.js';
 import { PermissionsGuard } from '../src/security/guards/permissions.guard.js';
+import { ProductSearchIndexRepository } from '../src/modules/commerce/search/repositories/product-search-index.repository.js';
+import { AppLogger } from '../src/infrastructure/logging/logger.service.js';
 import { AttributeType } from '@prisma/client';
 import { requestContextStorage } from '../src/common/context/request-context.js';
 
@@ -158,6 +160,13 @@ describe('Attribute System E2E Workflow', () => {
         AttributeValidationService,
         ProductsService,
         CatalogSearchRepository,
+        {
+          provide: ProductSearchIndexRepository,
+          useValue: {
+            refreshProductVector: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AppLogger, useValue: { error: jest.fn(), log: jest.fn(), warn: jest.fn() } },
         { provide: TenantPrismaService, useValue: mockDb },
         { provide: CacheService, useValue: mockCache },
         {

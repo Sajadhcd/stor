@@ -8,6 +8,7 @@ import { ProductQueryDto } from './dto/product-query.dto.js';
 import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
 import { normalizeAttributeKey } from './attribute-definitions/attribute-key.util.js';
 import { CatalogSearchRepository } from './repositories/catalog-search.repository.js';
+import { ProductSearchIndexRepository } from '../search/repositories/product-search-index.repository.js';
 
 function getCasingVariants(key: string, originalDefName?: string): string[] {
   const variants = new Set<string>();
@@ -32,6 +33,7 @@ export class ProductsService {
     private readonly cache: CacheService,
     private readonly attributeValidation: AttributeValidationService,
     private readonly catalogSearch: CatalogSearchRepository,
+    private readonly searchIndex: ProductSearchIndexRepository,
   ) {}
 
   private getTenantId(): string {
@@ -464,6 +466,9 @@ export class ProductsService {
         });
       }
 
+      // Refresh FTS vector inside the transaction — failure rolls back the entire create.
+      await this.searchIndex.refreshProductVector(tx, data.tenantId, product.id);
+
       return product;
     });
 
@@ -569,6 +574,18 @@ export class ProductsService {
             },
           });
         }
+      }
+
+      // Refresh FTS vector only when search-relevant fields changed.
+      // isPublished, categoryIds, imageUrls do not affect the tsvector.
+      const needsVectorRefresh =
+        data.titleTranslations !== undefined ||
+        data.descriptionTranslations !== undefined ||
+        data.slug !== undefined ||
+        data.brandId !== undefined;
+
+      if (needsVectorRefresh) {
+        await this.searchIndex.refreshProductVector(tx, product.tenantId, id);
       }
 
       return updated;
@@ -777,7 +794,7 @@ export class ProductsService {
         }
       }
 
-      return tx.productVariant.create({
+      const variant = await tx.productVariant.create({
         data: {
           tenantId: data.tenantId,
           productId,
@@ -795,6 +812,11 @@ export class ProductsService {
           attributes: validatedAttributes ? (validatedAttributes as any) : undefined,
         },
       });
+
+      // Refresh FTS vector after variant creation — new SKU must be indexed.
+      await this.searchIndex.refreshProductVector(tx, data.tenantId, productId);
+
+      return variant;
     });
 
     await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
@@ -858,7 +880,7 @@ export class ProductsService {
         }
       }
 
-      return tx.productVariant.update({
+      const updated = await tx.productVariant.update({
         where: { id: variantId },
         data: {
           sku: data.sku,
@@ -875,6 +897,18 @@ export class ProductsService {
           attributes: validatedAttributes !== undefined ? (validatedAttributes as any) : undefined,
         },
       });
+
+      // Refresh FTS vector only when SKU or isActive changed.
+      // Price, weight, cost, barcode, position, dimensions do not affect tsvector.
+      const needsVectorRefresh =
+        data.sku !== undefined ||
+        data.isActive !== undefined;
+
+      if (needsVectorRefresh) {
+        await this.searchIndex.refreshProductVector(tx, data.tenantId, productId);
+      }
+
+      return updated;
     });
 
     await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
@@ -892,9 +926,14 @@ export class ProductsService {
         throw new NotFoundException(`Variant with ID ${variantId} not found under product ${productId}`);
       }
 
-      return tx.productVariant.delete({
+      const deleted = await tx.productVariant.delete({
         where: { id: variantId },
       });
+
+      // Refresh FTS vector after hard delete — removed SKU must be cleared from index.
+      await this.searchIndex.refreshProductVector(tx, tenantId, productId);
+
+      return deleted;
     });
 
     await this.cache.invalidateKeys(`tenant:${product.tenantId}:product-keys`);
@@ -966,6 +1005,12 @@ export class ProductsService {
         });
         createdVariants.push(variant);
       }
+
+      // Refresh the FTS vector exactly once after all variants are created.
+      // Do not refresh per-variant — one call aggregates all SKUs atomically.
+      // If no new variants were created (all SKUs already exist), still refresh
+      // to ensure the vector is consistent with current state.
+      await this.searchIndex.refreshProductVector(tx, data.tenantId, productId);
 
       return createdVariants;
     });

@@ -2,12 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ProductsService } from './products.service.js';
 import { TenantPrismaService } from '../../../infrastructure/database/tenant-prisma.service.js';
 import { CacheService } from '../../../infrastructure/cache/cache.service.js';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { NotFoundException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { requestContextStorage } from '../../../common/context/request-context.js';
 import { Prisma } from '@prisma/client';
 import { SortOrder } from '../../../common/dto/pagination-query.dto.js';
 import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
 import { CatalogSearchRepository } from './repositories/catalog-search.repository.js';
+import { ProductSearchIndexRepository } from '../search/repositories/product-search-index.repository.js';
 
 interface MockProduct {
   id: string;
@@ -101,6 +102,8 @@ type TxCallback<T> = (tx: MockPrismaTx) => Promise<T>;
 
 interface MockPrismaTx {
   $queryRawUnsafe: jest.Mock;
+  $executeRaw: jest.Mock;
+  [key: string]: any; // allows test-only property assignment (brand, productImage, etc.)
   product: {
     findMany: jest.Mock;
     count: jest.Mock;
@@ -136,6 +139,7 @@ describe('ProductsService', () => {
   let mockTx: MockPrismaTx;
   let mockTenantPrismaService: { exec: jest.Mock };
   let mockCatalogSearch: { searchRankedProductIds: jest.Mock };
+  let mockSearchIndex: { refreshProductVector: jest.Mock };
 
   beforeEach(async () => {
     mockCacheService = {
@@ -153,6 +157,7 @@ describe('ProductsService', () => {
 
     mockTx = {
       $queryRawUnsafe: jest.fn().mockResolvedValue([]),
+      $executeRaw: jest.fn().mockResolvedValue(1),
       product: {
         findMany: jest.fn().mockResolvedValue([defaultProduct]),
         count: jest.fn().mockResolvedValue(1),
@@ -199,6 +204,10 @@ describe('ProductsService', () => {
       searchRankedProductIds: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     };
 
+    mockSearchIndex = {
+      refreshProductVector: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
@@ -206,6 +215,7 @@ describe('ProductsService', () => {
         { provide: CacheService, useValue: mockCacheService },
         { provide: AttributeValidationService, useValue: mockAttributeValidation },
         { provide: CatalogSearchRepository, useValue: mockCatalogSearch },
+        { provide: ProductSearchIndexRepository, useValue: mockSearchIndex },
       ],
     }).compile();
 
@@ -900,6 +910,268 @@ describe('ProductsService', () => {
       await service.update('prod-123', { isPublished: true });
 
       expect(mockCacheService.invalidateKeys).toHaveBeenCalledWith('tenant:tenant-123:product-keys');
+    });
+  });
+
+  // =========================================================================
+  // FTS Write Synchronization Tests
+  // =========================================================================
+
+  describe('FTS vector refresh — product write paths', () => {
+    const tenantId = 'tenant-123';
+
+    describe('create', () => {
+      it('should call refreshProductVector after product creation', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.store.findFirst.mockResolvedValue(createMockStore());
+        mockTx.product.create.mockResolvedValue(product);
+
+        await requestContextStorage.run({ tenantId, requestId: 'r', correlationId: 'c' }, () =>
+          service.create({
+            tenantId,
+            titleTranslations: { en: 'Test', ar: 'تجربة' },
+          }),
+        );
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledWith(
+          mockTx,
+          tenantId,
+          product.id,
+        );
+      });
+
+      it('should invalidate cache AFTER db.exec resolves (after refresh)', async () => {
+        const callOrder: string[] = [];
+        mockTx.store.findFirst.mockResolvedValue(createMockStore());
+        mockTx.product.create.mockResolvedValue(createMockProduct({ tenantId }));
+        mockSearchIndex.refreshProductVector.mockImplementation(async () => {
+          callOrder.push('refresh');
+        });
+        mockCacheService.invalidateKeys.mockImplementation(async () => {
+          callOrder.push('cache');
+        });
+
+        await service.create({ tenantId, titleTranslations: { en: 'Test' } });
+
+        expect(callOrder).toEqual(['refresh', 'cache']);
+      });
+    });
+
+    describe('update', () => {
+      it('should refresh when titleTranslations is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue(product);
+
+        await service.update('prod-123', { titleTranslations: { en: 'New Title' } });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+      });
+
+      it('should refresh when descriptionTranslations is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue(product);
+
+        await service.update('prod-123', { descriptionTranslations: { en: 'New Desc' } });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+      });
+
+      it('should refresh when slug is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue(product);
+
+        await service.update('prod-123', { slug: 'new-slug' });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+      });
+
+      it('should refresh when brandId is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.brand = { findFirst: jest.fn().mockResolvedValue({ id: 'brand-1' }) } as any;
+        mockTx.product.update.mockResolvedValue(product);
+
+        await service.update('prod-123', { brandId: 'brand-1' });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+      });
+
+      it('should NOT refresh when only isPublished is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue(product);
+
+        await service.update('prod-123', { isPublished: false });
+
+        expect(mockSearchIndex.refreshProductVector).not.toHaveBeenCalled();
+      });
+
+      it('should NOT refresh when only categoryIds is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue(product);
+        mockTx.category.findMany.mockResolvedValue([{ id: 'cat-1' }]);
+
+        await service.update('prod-123', { categoryIds: ['cat-1'] });
+
+        expect(mockSearchIndex.refreshProductVector).not.toHaveBeenCalled();
+      });
+
+      it('should NOT refresh when only imageUrls is provided', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue(product);
+        mockTx.productImage = {
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+          create: jest.fn().mockResolvedValue({}),
+        } as any;
+
+        await service.update('prod-123', { imageUrls: ['https://example.com/img.jpg'] });
+
+        expect(mockSearchIndex.refreshProductVector).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('softDelete', () => {
+      it('should NOT call refreshProductVector on soft delete', async () => {
+        const product = createMockProduct({ tenantId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.product.update.mockResolvedValue({ ...product, deletedAt: new Date() });
+
+        await service.softDelete('prod-123');
+
+        expect(mockSearchIndex.refreshProductVector).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('refresh failure rolls back parent write', () => {
+      it('should propagate ServiceUnavailableException from refresh and not invalidate cache', async () => {
+        mockTx.store.findFirst.mockResolvedValue(createMockStore());
+        mockTx.product.create.mockResolvedValue(createMockProduct({ tenantId }));
+        mockSearchIndex.refreshProductVector.mockRejectedValueOnce(
+          new ServiceUnavailableException('Search index refresh failed. The write has been rolled back.'),
+        );
+
+        await expect(
+          service.create({ tenantId, titleTranslations: { en: 'Test' } }),
+        ).rejects.toThrow(ServiceUnavailableException);
+
+        // Cache must NOT be invalidated — the DB transaction was rolled back
+        expect(mockCacheService.invalidateKeys).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('FTS vector refresh — variant write paths', () => {
+    const tenantId = 'tenant-123';
+    const productId = 'prod-123';
+
+    describe('createVariant', () => {
+      it('should call refreshProductVector after variant creation', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.productVariant.findFirst.mockResolvedValue(null);
+        mockTx.productVariant.create.mockResolvedValue(createMockVariant({ tenantId, productId }));
+
+        await service.createVariant(productId, { sku: 'SKU-NEW', price: 100, tenantId });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledWith(mockTx, tenantId, productId);
+      });
+    });
+
+    describe('updateVariant', () => {
+      it('should refresh when sku is provided', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        const variant = createMockVariant({ tenantId, productId, id: 'var-1', sku: 'OLD-SKU' });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.productVariant.findFirst
+          .mockResolvedValueOnce(variant)    // variant lookup
+          .mockResolvedValue(null);           // SKU uniqueness check
+        mockTx.productVariant.update.mockResolvedValue({ ...variant, sku: 'NEW-SKU' });
+
+        await service.updateVariant(productId, 'var-1', { sku: 'NEW-SKU', tenantId });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+      });
+
+      it('should refresh when isActive is provided', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        const variant = createMockVariant({ tenantId, productId, id: 'var-1' });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.productVariant.findFirst.mockResolvedValueOnce(variant);
+        mockTx.productVariant.update.mockResolvedValue(variant);
+
+        await service.updateVariant(productId, 'var-1', { isActive: false, tenantId });
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+      });
+
+      it('should NOT refresh when only price is provided', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        const variant = createMockVariant({ tenantId, productId, id: 'var-1' });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.productVariant.findFirst.mockResolvedValueOnce(variant);
+        mockTx.productVariant.update.mockResolvedValue(variant);
+
+        await service.updateVariant(productId, 'var-1', { price: 299, tenantId });
+
+        expect(mockSearchIndex.refreshProductVector).not.toHaveBeenCalled();
+      });
+
+      it('should NOT refresh when only weight is provided', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        const variant = createMockVariant({ tenantId, productId, id: 'var-1' });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.productVariant.findFirst.mockResolvedValueOnce(variant);
+        mockTx.productVariant.update.mockResolvedValue(variant);
+
+        await service.updateVariant(productId, 'var-1', { weight: 1.5, tenantId });
+
+        expect(mockSearchIndex.refreshProductVector).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('deleteVariant', () => {
+      it('should call refreshProductVector after variant deletion', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        const variant = createMockVariant({ tenantId, productId, id: 'var-1' });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        mockTx.productVariant.findFirst.mockResolvedValueOnce(variant);
+        mockTx.productVariant.delete.mockResolvedValue(variant);
+
+        await service.deleteVariant(productId, 'var-1', tenantId);
+
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledWith(mockTx, tenantId, productId);
+      });
+    });
+
+    describe('generateVariantMatrix', () => {
+      it('should refresh exactly once after all variants are created', async () => {
+        const product = createMockProduct({ tenantId, id: productId });
+        mockTx.product.findFirst.mockResolvedValue(product);
+        // Return null for SKU uniqueness checks (all new SKUs)
+        mockTx.productVariant.findFirst.mockResolvedValue(null);
+        mockTx.productVariant.create.mockImplementation((args: any) =>
+          Promise.resolve(createMockVariant({ sku: args.data.sku, tenantId, productId })),
+        );
+
+        await service.generateVariantMatrix(productId, {
+          baseSku: 'BASE',
+          basePrice: 100,
+          options: { color: ['Red', 'Blue'], size: ['S', 'M'] },
+          tenantId,
+        });
+
+        // 4 combinations (Red-S, Red-M, Blue-S, Blue-M) but refresh called exactly ONCE
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledTimes(1);
+        expect(mockSearchIndex.refreshProductVector).toHaveBeenCalledWith(mockTx, tenantId, productId);
+      });
     });
   });
 });

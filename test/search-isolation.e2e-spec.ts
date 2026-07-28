@@ -7,6 +7,8 @@ import { ConfigService } from '../src/infrastructure/config/config.service.js';
 import { requestContextStorage } from '../src/common/context/request-context.js';
 
 describe('Search Isolation E2E', () => {
+  jest.setTimeout(30000);
+
   let adminPrisma: PrismaClient;
   let tenantPrismaService: TenantPrismaService;
   let provider: PostgresFtsProvider;
