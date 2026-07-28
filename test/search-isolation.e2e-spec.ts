@@ -19,12 +19,12 @@ describe('Search Isolation E2E', () => {
   const storeBId = randomUUID();
   const productAId = randomUUID();
   const productBId = randomUUID();
-  
+
   const uniqueSearchTerm = `UniqueSearchTerm${randomUUID().substring(0, 8)}`;
 
   beforeAll(async () => {
     adminPrisma = new PrismaClient();
-    
+
     // Create Tenants
     await adminPrisma.tenant.createMany({
       data: [
@@ -68,7 +68,7 @@ describe('Search Isolation E2E', () => {
 
     tenantPrismaService = new TenantPrismaService(mockConfig);
     await tenantPrismaService.onModuleInit();
-    
+
     provider = new PostgresFtsProvider(tenantPrismaService);
   });
 
@@ -118,13 +118,13 @@ describe('Search Isolation E2E', () => {
       { tenantId: tenantAId, requestId: 'test-req', correlationId: 'test-corr' },
       async () => {
         const resultA = await provider.search(tenantAId, { query: uniqueSearchTerm });
-        
+
         // Do not filter unexpected results out before asserting
         const matchingIds = resultA.items.map(i => i.id);
-        
+
         // Assert tenant A product is returned
         expect(matchingIds).toContain(productAId);
-        
+
         // Assert tenant B product is not returned
         expect(matchingIds).not.toContain(productBId);
       }

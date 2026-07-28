@@ -84,7 +84,7 @@ describe('Brand-Rename-FTS-Fan-out-E2E', () => {
         },
       });
     });
-    
+
     // Explicitly refresh vectors once so they have the old brand name
     await db.runAsTenant(TENANT_ID, async (tx) => {
       await tx.$executeRaw`SELECT update_product_search_vector(${TENANT_ID}::uuid, ${PROD1_ID}::uuid)`;
@@ -98,7 +98,7 @@ describe('Brand-Rename-FTS-Fan-out-E2E', () => {
 
   it('verifies initial vectors match the old brand name', async () => {
     const term = 'OldFanoutBrand';
-    
+
     const results = await db.runAsTenant(TENANT_ID, async (tx) => {
       return tx.$queryRawUnsafe<any[]>(
         `SELECT id FROM products WHERE tenant_id = '${TENANT_ID}' AND tsv_search @@ build_catalog_search_query('${term}')`
@@ -135,7 +135,7 @@ describe('Brand-Rename-FTS-Fan-out-E2E', () => {
         `SELECT id, title_translations FROM products WHERE tenant_id = '${TENANT_ID}' AND tsv_search @@ build_catalog_search_query('${newTerm}')`
       );
     });
-    
+
     expect(newResults.length).toBe(2);
     expect(newResults.map(r => r.id).sort()).toEqual([PROD1_ID, PROD2_ID].sort());
   }, 30000); // 30s timeout for worker

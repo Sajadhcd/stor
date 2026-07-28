@@ -41,7 +41,7 @@ export class BrandRenameWorker extends WorkerHost {
 
     const { tenantId, brandId, correlationId } = payload;
     const logCtx = `Job ${job.id} | Tenant ${tenantId} | Brand ${brandId}`;
-    
+
     this.logger.log(`Starting brand rename fan-out: ${logCtx}`, 'BrandRenameWorker');
 
     // 1. Verify brand exists (and is not deleted) using tenant-scoped context
@@ -58,12 +58,12 @@ export class BrandRenameWorker extends WorkerHost {
 
     // 2. Process products in batches using stable keyset pagination
     const BATCH_SIZE = 100;
-    // Note: The user requested that we do NOT rely on job progress to resume. 
+    // Note: The user requested that we do NOT rely on job progress to resume.
     // "On every retry: restart pagination from the beginning... rely on idempotent refresh behavior"
     // "job.updateProgress may be used only for observability"
     let cursor = '';
     let processedCount = 0;
-    
+
     let hasMore = true;
 
     while (hasMore) {
@@ -91,12 +91,12 @@ export class BrandRenameWorker extends WorkerHost {
       // Refresh each product in its own transaction
       for (const product of products) {
         const attempt = job.attemptsMade + 1;
-        
+
         try {
           await this.db.runAsTenant(tenantId, async (tx) => {
             await this.searchIndex.refreshProductVector(tx, tenantId, product.id);
           });
-          
+
           processedCount++;
           cursor = product.id;
         } catch (error: any) {

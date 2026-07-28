@@ -48,8 +48,8 @@ export class PostgresFtsProvider implements SearchProvider {
 
       if (categoryId) {
         conditions.push(Prisma.sql`EXISTS (
-          SELECT 1 FROM categories_products cp 
-          WHERE cp.product_id = p.id 
+          SELECT 1 FROM categories_products cp
+          WHERE cp.product_id = p.id
             AND cp.category_id = ${categoryId}::uuid
         )`);
       }
@@ -64,8 +64,8 @@ export class PostgresFtsProvider implements SearchProvider {
 
       // Total count query
       const countQuery = Prisma.sql`
-        SELECT COUNT(*)::int as count 
-        FROM products p 
+        SELECT COUNT(*)::int as count
+        FROM products p
         WHERE ${whereClause}
       `;
 

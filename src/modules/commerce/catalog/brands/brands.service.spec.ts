@@ -118,10 +118,10 @@ describe('BrandsService', () => {
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       const result = await service.update('b1', { name: 'NewName' }, 'tenant-1');
-      
+
       expect(result.name).toBe('NewName'); // Return success despite queue down
       expect(consoleSpy).toHaveBeenCalled(); // Should log explicitly
-      
+
       consoleSpy.mockRestore();
     });
   });
