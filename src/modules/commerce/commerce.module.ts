@@ -12,6 +12,7 @@ import { InstallmentsModule } from './installments/installments.module.js';
 import { CartModule } from './cart/cart.module.js';
 import { CheckoutModule } from './checkout/checkout.module.js';
 import { ShippingModule } from './shipping/shipping.module.js';
+import { SearchModule } from './search/search.module.js';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ShippingModule } from './shipping/shipping.module.js';
     CartModule,
     CheckoutModule,
     ShippingModule,
+    SearchModule,
   ],
   exports: [
     CatalogModule,
@@ -43,6 +45,7 @@ import { ShippingModule } from './shipping/shipping.module.js';
     CartModule,
     CheckoutModule,
     ShippingModule,
+    SearchModule,
   ],
 })
 export class CommerceModule {}

@@ -99,6 +99,7 @@ const createMockVariant = (overrides?: Partial<MockProductVariant>): MockProduct
 type TxCallback<T> = (tx: MockPrismaTx) => Promise<T>;
 
 interface MockPrismaTx {
+  $queryRawUnsafe: jest.Mock;
   product: {
     findMany: jest.Mock;
     count: jest.Mock;
@@ -149,6 +150,7 @@ describe('ProductsService', () => {
     const defaultVariant = createMockVariant();
 
     mockTx = {
+      $queryRawUnsafe: jest.fn().mockResolvedValue([]),
       product: {
         findMany: jest.fn().mockResolvedValue([defaultProduct]),
         count: jest.fn().mockResolvedValue(1),
@@ -292,6 +294,77 @@ describe('ProductsService', () => {
           orderBy: { price: 'asc' },
         }),
       );
+    });
+
+    it('should handle price_asc using database ordering via variant min price', async () => {
+      mockTx.product.findMany.mockResolvedValueOnce([{ id: 'prod-123' }]);
+      mockTx.$queryRawUnsafe.mockResolvedValueOnce([{ id: 'prod-123' }]);
+      mockTx.product.findMany.mockResolvedValueOnce([createMockProduct({ id: 'prod-123' })]);
+
+      await service.findAll({ sortBy: 'price_asc', skip: 0, take: 20 });
+
+      expect(mockTx.product.findMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          select: { id: true },
+        }),
+      );
+
+      expect(mockTx.$queryRawUnsafe).toHaveBeenCalledWith(
+        expect.stringContaining('MIN(pv.price) ASC'),
+        expect.any(String),
+        20,
+        0,
+      );
+
+      expect(mockTx.product.findMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: { id: { in: ['prod-123'] } },
+        }),
+      );
+    });
+
+    it('should handle price_desc using database ordering via variant max price', async () => {
+      mockTx.product.findMany.mockResolvedValueOnce([{ id: 'prod-123' }]);
+      mockTx.$queryRawUnsafe.mockResolvedValueOnce([{ id: 'prod-123' }]);
+      mockTx.product.findMany.mockResolvedValueOnce([createMockProduct({ id: 'prod-123' })]);
+
+      await service.findAll({ sortBy: 'price_desc', skip: 0, take: 20 });
+
+      expect(mockTx.product.findMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          select: { id: true },
+        }),
+      );
+
+      expect(mockTx.$queryRawUnsafe).toHaveBeenCalledWith(
+        expect.stringContaining('MAX(pv.price) DESC'),
+        expect.any(String),
+        20,
+        0,
+      );
+    });
+
+    it('should not perform post-pagination sorting in memory', async () => {
+      const productA = createMockProduct({
+        id: 'prod-A',
+        variants: [createMockVariant({ id: 'var-A', price: 100 })],
+      });
+      const productB = createMockProduct({
+        id: 'prod-B',
+        variants: [createMockVariant({ id: 'var-B', price: 50 })],
+      });
+
+      mockTx.product.findMany.mockResolvedValueOnce([{ id: 'prod-A' }, { id: 'prod-B' }]);
+      mockTx.$queryRawUnsafe.mockResolvedValueOnce([{ id: 'prod-A' }, { id: 'prod-B' }]);
+      mockTx.product.findMany.mockResolvedValueOnce([productA, productB]);
+
+      const result = await service.findAll({ sortBy: 'price_asc', skip: 0, take: 2 });
+
+      expect(result.data[0].id).toBe('prod-A');
+      expect(result.data[1].id).toBe('prod-B');
     });
 
     it('should use tenantId from requestContextStorage for cache key scoping', async () => {
