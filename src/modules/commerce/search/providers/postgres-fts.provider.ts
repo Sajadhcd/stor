@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { TenantPrismaService } from '../../../../infrastructure/database/tenant-prisma.service.js';
 import type { SearchProvider, SearchOptions, SearchResult, SearchResultItem } from './search-provider.interface.js';
 import { Prisma } from '@prisma/client';
+import { requestContextStorage } from '../../../../common/context/request-context.js';
 
 @Injectable()
 export class PostgresFtsProvider implements SearchProvider {
@@ -98,21 +99,35 @@ export class PostgresFtsProvider implements SearchProvider {
   }
 
   async refreshProductVector(productId: string): Promise<void> {
+    // Note: this standalone method is retained for backward-compatible manual/admin calls.
+    // Write-path synchronization inside product transactions uses
+    // ProductSearchIndexRepository.refreshProductVector(tx, tenantId, productId) instead.
+    //
+    // The nexio_app role no longer has EXECUTE on the 1-argument form; this method
+    // therefore requires tenantId to call the 2-argument form. We read it from
+    // the request context, which is set by TenantMiddleware for all HTTP requests.
+    const ctx = requestContextStorage.getStore();
+    const tenantId = ctx?.tenantId;
+    if (!tenantId) {
+      throw new Error(
+        'refreshProductVector requires a tenant context (app.current_tenant_id). ' +
+        'Call from a request context or use ProductSearchIndexRepository inside a transaction.',
+      );
+    }
     await this.db.exec(async (tx) => {
-      await tx.$executeRaw`SELECT update_product_search_vector(${productId}::uuid)`;
+      await tx.$executeRaw`SELECT update_product_search_vector(${tenantId}::uuid, ${productId}::uuid)`;
     });
   }
 
   async refreshAllProductVectors(tenantId: string): Promise<void> {
     await this.db.exec(async (tx) => {
-      // Bulk SQL function is restricted to admin role.
-      // App layer iterates and calls the allowed single-product refresh function.
-      const products = await tx.product.findMany({ 
-        where: { tenantId }, 
-        select: { id: true } 
+      // Iterate per product and call the 2-argument tenant-safe function.
+      const products = await tx.product.findMany({
+        where: { tenantId },
+        select: { id: true },
       });
       for (const p of products) {
-        await tx.$executeRaw`SELECT update_product_search_vector(${p.id}::uuid)`;
+        await tx.$executeRaw`SELECT update_product_search_vector(${tenantId}::uuid, ${p.id}::uuid)`;
       }
     });
   }

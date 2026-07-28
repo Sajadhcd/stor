@@ -7,12 +7,13 @@ import { AttributeDefinitionsModule } from './attribute-definitions/attribute-de
 import { IdentityModule } from '../../identity/identity.module.js';
 
 import { CatalogSearchRepository } from './repositories/catalog-search.repository.js';
+import { ProductSearchIndexRepository } from '../search/repositories/product-search-index.repository.js';
 
 @Module({
   imports: [IdentityModule, BrandsModule, CategoriesModule, AttributeDefinitionsModule],
   controllers: [ProductsController],
-  providers: [ProductsService, CatalogSearchRepository],
-  exports: [ProductsService, CategoriesModule, AttributeDefinitionsModule],
+  providers: [ProductsService, CatalogSearchRepository, ProductSearchIndexRepository],
+  exports: [ProductsService, CategoriesModule, AttributeDefinitionsModule, ProductSearchIndexRepository],
 })
 export class CatalogModule {}
 
