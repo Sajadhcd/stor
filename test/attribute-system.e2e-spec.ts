@@ -5,6 +5,7 @@ import { AttributeDefinitionsController } from '../src/modules/commerce/catalog/
 import { AttributeDefinitionsService } from '../src/modules/commerce/catalog/attribute-definitions/attribute-definitions.service.js';
 import { ProductsController } from '../src/modules/commerce/catalog/products.controller.js';
 import { ProductsService } from '../src/modules/commerce/catalog/products.service.js';
+import { CatalogSearchRepository } from '../src/modules/commerce/catalog/repositories/catalog-search.repository.js';
 import { AttributeValidationService } from '../src/modules/commerce/catalog/attribute-definitions/attribute-validation.service.js';
 import { TenantPrismaService } from '../src/infrastructure/database/tenant-prisma.service.js';
 import { CacheService } from '../src/infrastructure/cache/cache.service.js';
@@ -154,8 +155,9 @@ describe('Attribute System E2E Workflow', () => {
       controllers: [AttributeDefinitionsController, ProductsController],
       providers: [
         AttributeDefinitionsService,
-        ProductsService,
         AttributeValidationService,
+        ProductsService,
+        CatalogSearchRepository,
         { provide: TenantPrismaService, useValue: mockDb },
         { provide: CacheService, useValue: mockCache },
         {

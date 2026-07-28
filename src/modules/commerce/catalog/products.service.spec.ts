@@ -7,6 +7,7 @@ import { requestContextStorage } from '../../../common/context/request-context.j
 import { Prisma } from '@prisma/client';
 import { SortOrder } from '../../../common/dto/pagination-query.dto.js';
 import { AttributeValidationService } from './attribute-definitions/attribute-validation.service.js';
+import { CatalogSearchRepository } from './repositories/catalog-search.repository.js';
 
 interface MockProduct {
   id: string;
@@ -134,6 +135,7 @@ describe('ProductsService', () => {
   let mockCacheService: jest.Mocked<CacheService>;
   let mockTx: MockPrismaTx;
   let mockTenantPrismaService: { exec: jest.Mock };
+  let mockCatalogSearch: { searchRankedProductIds: jest.Mock };
 
   beforeEach(async () => {
     mockCacheService = {
@@ -193,12 +195,17 @@ describe('ProductsService', () => {
       validateMatrixOptions: jest.fn().mockImplementation((tenantId, catIds, options) => Promise.resolve(options)),
     };
 
+    mockCatalogSearch = {
+      searchRankedProductIds: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsService,
         { provide: TenantPrismaService, useValue: mockTenantPrismaService },
         { provide: CacheService, useValue: mockCacheService },
         { provide: AttributeValidationService, useValue: mockAttributeValidation },
+        { provide: CatalogSearchRepository, useValue: mockCatalogSearch },
       ],
     }).compile();
 
@@ -243,7 +250,11 @@ describe('ProductsService', () => {
       );
     });
 
-    it('should filter products by storeId, isPublished, search, categoryId, and soft-delete status', async () => {
+    it('should filter products by storeId, isPublished, search, categoryId, and soft-delete status using FTS', async () => {
+      mockCatalogSearch.searchRankedProductIds.mockResolvedValueOnce({ items: [{ id: '1', score: 0.9 }], total: 1 });
+
+      mockTx.product.findMany.mockResolvedValueOnce([{ id: '1', variants: [] }]);
+
       await service.findAll({
         storeId: 'store-123',
         isPublished: true,
@@ -253,25 +264,24 @@ describe('ProductsService', () => {
         take: 20,
       });
 
-      expect(mockTx.product.findMany).toHaveBeenCalledWith(
+      expect(mockCatalogSearch.searchRankedProductIds).toHaveBeenCalledWith(
+        mockTx,
+        'global',
         expect.objectContaining({
-          where: {
-            storeId: 'store-123',
-            isPublished: true,
-            OR: [
-              { titleTranslations: { path: ['ar'], string_contains: 'SKU-001' } },
-              { titleTranslations: { path: ['en'], string_contains: 'SKU-001' } },
-              { descriptionTranslations: { path: ['ar'], string_contains: 'SKU-001' } },
-              { descriptionTranslations: { path: ['en'], string_contains: 'SKU-001' } },
-              { slug: { contains: 'SKU-001', mode: 'insensitive' } },
-              { brand: { name: { contains: 'SKU-001', mode: 'insensitive' } } },
-              { variants: { some: { sku: { contains: 'SKU-001', mode: 'insensitive' } } } },
-            ],
-            categories: { some: { categoryId: 'cat-1' } },
-            deletedAt: null,
-          },
+          storeId: 'store-123',
+          isPublished: true,
+          query: 'SKU-001',
+          categoryId: 'cat-1',
+          skip: 0,
+          take: 20,
         }),
+        expect.any(Array)
       );
+
+      expect(mockTx.product.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['1'] } },
+        include: expect.any(Object),
+      });
     });
 
     it('should apply custom pagination parameters (skip, take, page, limit, totalPages)', async () => {

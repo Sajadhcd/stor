@@ -61,7 +61,7 @@ describe('Search Isolation E2E', () => {
 
     // Setup provider
     const mockConfig = {
-      appDatabaseUrl: process.env.APP_DATABASE_URL || 'postgresql://nexio_app:nAx--aXaRYFt1wszxf_QfUalMpOak5vJDAKh8L1grdIDpqjL@localhost:5432/nexio_commerce?schema=public',
+      appDatabaseUrl: process.env.APP_DATABASE_URL,
     } as unknown as ConfigService;
 
     tenantPrismaService = new TenantPrismaService(mockConfig);
@@ -71,16 +71,26 @@ describe('Search Isolation E2E', () => {
   });
 
   afterAll(async () => {
-    // Clean up
-    if (adminPrisma) {
-      await adminPrisma.product.deleteMany({ where: { id: { in: [productAId, productBId] } } });
-      await adminPrisma.store.deleteMany({ where: { id: { in: [storeAId, storeBId] } } });
-      await adminPrisma.tenant.deleteMany({ where: { id: { in: [tenantAId, tenantBId] } } });
-      await adminPrisma.auditLog.deleteMany({ where: { rowId: { in: [tenantAId, tenantBId, storeAId, storeBId, productAId, productBId] } } });
-      await adminPrisma.$disconnect();
-    }
-    if (tenantPrismaService) {
-      await tenantPrismaService.onModuleDestroy();
+    // Clean up in dependency order: audit logs first, then data rows, then tenants
+    try {
+      if (adminPrisma) {
+        await adminPrisma.auditLog.deleteMany({
+          where: {
+            OR: [
+              { rowId: { in: [productAId, productBId, storeAId, storeBId, tenantAId, tenantBId] } },
+              { tenantId: { in: [tenantAId, tenantBId] } },
+            ],
+          },
+        });
+        await adminPrisma.product.deleteMany({ where: { id: { in: [productAId, productBId] } } });
+        await adminPrisma.store.deleteMany({ where: { id: { in: [storeAId, storeBId] } } });
+        await adminPrisma.tenant.deleteMany({ where: { id: { in: [tenantAId, tenantBId] } } });
+        await adminPrisma.$disconnect();
+      }
+    } finally {
+      if (tenantPrismaService) {
+        await tenantPrismaService.onModuleDestroy();
+      }
     }
   });
 
